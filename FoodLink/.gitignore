@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# secrets — never commit
+.env
+.env.local
+.env*.local
+
+# build / cache
+.next/
+dist/
+
+# test inputs (keep the folder, ignore the photos)
+test-images/*
+!test-images/.gitkeep

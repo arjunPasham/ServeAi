@@ -1,0 +1,19 @@
+{
+  "name": "foodlink",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FoodLink — minimal scaffold for isolated Gemini Vision food-scan test (not a deploy target).",
+  "scripts": {
+    "test:scan": "tsx scripts/test-scan.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.10.0",
+    "next": "^16.2.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
