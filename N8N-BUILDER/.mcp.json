@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "type": "http",
+      "url": "https://arjunpasham.app.n8n.cloud/mcp-server/http",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyMDgxOWIxNi02NGZhLTQ2NzQtODI1YS0wOWI4NzMxMDM4ZmQiLCJpc3MiOiJuOG4iLCJhdWQiOiJtY3Atc2VydmVyLWFwaSIsImp0aSI6IjJlMmI5MzQ3LWUxYjgtNGJkZS1iMGY1LTM2MjcyODE0YzlkZCIsImlhdCI6MTc4Mjc1ODU3NX0.-9BMP6bPEQXPJqNiMjCvr1m8q_4ccMJXkmkrjNjj4zs"
+      }
+    }
+  }
+}

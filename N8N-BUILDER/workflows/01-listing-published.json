@@ -1,0 +1,151 @@
+{
+  "name": "FoodLink — Listing Published",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "listing-published",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "0713402d-2219-4c02-bf75-64d64f6b762e",
+      "name": "Receive Listing Published",
+      "webhookId": "fl-listing-published"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\nconst body = webhookData.body;\nconst rawBody = JSON.stringify(body);\nconst signature = (webhookData.headers || {})['x-n8n-signature'];\n\nif (!signature) {\n  return [{ json: { ...body, _valid: false } }];\n}\n\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', $vars.N8N_WEBHOOK_SECRET)\n  .update(rawBody)\n  .digest('hex');\n\nreturn [{ json: { ...body, _valid: signature === expectedSig } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "id": "b401f9ff-cb2d-4c37-b5c3-d88a596d499c",
+      "name": "Verify Signature"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "304a9aad-765e-4c59-9722-d2574a1b7e4f",
+              "leftValue": "={{ $json._valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "id": "97b2ee71-e9a7-4efa-a9f2-3599109e3841",
+      "name": "Route: Valid Signature?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"received\": true }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 160],
+      "id": "6724c296-f76a-4cc8-b490-e97edc246d9e",
+      "name": "Respond 200"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Unauthorized\" }",
+        "options": { "responseCode": 401 }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 440],
+      "id": "a8796d1a-1e06-44ca-9258-105a89117d9c",
+      "name": "Handle Error — Signature Fail"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/listings?status=eq.live&order=published_at.desc&limit=50&select=id,detected_item,estimated_quantity_lbs,consumer_price_cents,temperature_sensitive,image_url,published_at",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 160],
+      "id": "de12eb71-bcd8-43b3-b973-5d235110f889",
+      "name": "Supabase — Fetch Live Listings"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://onesignal.com/api/v1/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Basic {{ $vars.ONESIGNAL_REST_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"app_id\": \"{{ $vars.ONESIGNAL_APP_ID }}\",\n  \"included_segments\": [\"consumers\"],\n  \"headings\": { \"en\": \"New listing available\" },\n  \"contents\": {\n    \"en\": \"{{ $('Verify Signature').item.json.detected_item }} · {{ $('Verify Signature').item.json.estimated_quantity_lbs }}lbs · ${{ ($('Verify Signature').item.json.consumer_price_cents / 100).toFixed(2) }}\"\n  },\n  \"data\": {\n    \"listing_id\": \"{{ $('Verify Signature').item.json.listing_id }}\",\n    \"type\": \"new_listing\"\n  }\n}",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 160],
+      "id": "539e57b9-0122-4839-8834-af03fb0e4923",
+      "name": "OneSignal — Notify Consumers"
+    }
+  ],
+  "connections": {
+    "Receive Listing Published": {
+      "main": [
+        [{ "node": "Verify Signature", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [{ "node": "Route: Valid Signature?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route: Valid Signature?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Handle Error — Signature Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [{ "node": "Supabase — Fetch Live Listings", "type": "main", "index": 0 }]
+      ]
+    },
+    "Supabase — Fetch Live Listings": {
+      "main": [
+        [{ "node": "OneSignal — Notify Consumers", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true }
+}

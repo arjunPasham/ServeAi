@@ -1,0 +1,130 @@
+{
+  "name": "FoodLink — Listing Expired",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "listing-expired",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "45434f95-0eb2-44f2-8a44-0509197b6d5a",
+      "name": "Receive Listing Expired",
+      "webhookId": "fl-listing-expired"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\nconst body = webhookData.body;\nconst rawBody = JSON.stringify(body);\nconst signature = (webhookData.headers || {})['x-n8n-signature'];\n\nif (!signature) {\n  return [{ json: { ...body, _valid: false } }];\n}\n\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', $vars.N8N_WEBHOOK_SECRET)\n  .update(rawBody)\n  .digest('hex');\n\nreturn [{ json: { ...body, _valid: signature === expectedSig } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "id": "f2e6104f-b9a3-4d23-8195-0c166583b842",
+      "name": "Verify Signature"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a3680dba-4f48-4f5e-9f47-400909044638",
+              "leftValue": "={{ $json._valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "id": "f544d5bf-1db0-43dd-a3b6-0e2d879d6314",
+      "name": "Route: Valid Signature?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"received\": true }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 160],
+      "id": "534c94f4-30fe-4ba6-8ae7-9f0ab4cb3abf",
+      "name": "Respond 200"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Unauthorized\" }",
+        "options": { "responseCode": 401 }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 440],
+      "id": "0d6ee721-44be-4ef3-8efb-29f42dc9196c",
+      "name": "Handle Error — Signature Fail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://onesignal.com/api/v1/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Basic {{ $vars.ONESIGNAL_REST_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"app_id\": \"{{ $vars.ONESIGNAL_APP_ID }}\",\n  \"include_aliases\": { \"external_id\": [\"{{ $('Verify Signature').item.json.donor_id }}\"] },\n  \"target_channel\": \"push\",\n  \"headings\": { \"en\": \"Your listing was removed\" },\n  \"contents\": {\n    \"en\": \"Your {{ $('Verify Signature').item.json.detected_item }} listing has been hidden — it reached its food safety window and was removed from the marketplace.\"\n  },\n  \"data\": {\n    \"listing_id\": \"{{ $('Verify Signature').item.json.listing_id }}\",\n    \"type\": \"listing_expired\"\n  }\n}",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 160],
+      "id": "13c9ed39-e035-4026-bc9a-5d9c53f4f71c",
+      "name": "OneSignal — Notify Donor"
+    }
+  ],
+  "connections": {
+    "Receive Listing Expired": {
+      "main": [
+        [{ "node": "Verify Signature", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [{ "node": "Route: Valid Signature?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route: Valid Signature?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Handle Error — Signature Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [{ "node": "OneSignal — Notify Donor", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true }
+}
