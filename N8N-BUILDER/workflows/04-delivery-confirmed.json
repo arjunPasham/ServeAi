@@ -1,0 +1,159 @@
+{
+  "name": "FoodLink — Delivery Confirmed",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "delivery-confirmed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "921da519-d17d-45d3-83d2-53b5ccd910f7",
+      "name": "Receive Delivery Confirmed",
+      "webhookId": "fl-delivery-confirmed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\nconst body = webhookData.body;\nconst rawBody = JSON.stringify(body);\nconst signature = (webhookData.headers || {})['x-n8n-signature'];\n\nif (!signature) {\n  return [{ json: { ...body, _valid: false } }];\n}\n\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', $vars.N8N_WEBHOOK_SECRET)\n  .update(rawBody)\n  .digest('hex');\n\nreturn [{ json: { ...body, _valid: signature === expectedSig } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "id": "bc66ac51-8e22-4012-b02f-4cc39857b84c",
+      "name": "Verify Signature"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3ccf30e2-5e8f-4a11-896e-f16f848b6f97",
+              "leftValue": "={{ $json._valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "id": "e613848b-7c34-4f37-9ac2-0547c0cd741e",
+      "name": "Route: Valid Signature?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"received\": true }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 160],
+      "id": "67419341-2749-427d-99a9-773aec134952",
+      "name": "Respond 200"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Unauthorized\" }",
+        "options": { "responseCode": 401 }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 440],
+      "id": "84fc7406-3be6-4abc-9fc8-aca749fcd92d",
+      "name": "Handle Error — Signature Fail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://onesignal.com/api/v1/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Basic {{ $vars.ONESIGNAL_REST_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"app_id\": \"{{ $vars.ONESIGNAL_APP_ID }}\",\n  \"include_aliases\": { \"external_id\": [\"{{ $('Verify Signature').item.json.consumer_id }}\"] },\n  \"target_channel\": \"push\",\n  \"headings\": { \"en\": \"Your delivery has arrived\" },\n  \"contents\": {\n    \"en\": \"Your FoodLink delivery is here. You have 2 hours to report any issues — after that, the order is automatically accepted.\"\n  },\n  \"data\": {\n    \"order_id\": \"{{ $('Verify Signature').item.json.order_id }}\",\n    \"listing_id\": \"{{ $('Verify Signature').item.json.listing_id }}\",\n    \"delivered_at\": \"{{ $('Verify Signature').item.json.delivered_at }}\",\n    \"type\": \"delivery_confirmed\"\n  }\n}",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 160],
+      "id": "0c550b90-610a-4fda-9a6c-2cb168b6f97d",
+      "name": "OneSignal — Notify Consumer"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://onesignal.com/api/v1/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Basic {{ $vars.ONESIGNAL_REST_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"app_id\": \"{{ $vars.ONESIGNAL_APP_ID }}\",\n  \"include_aliases\": { \"external_id\": [\"{{ $('Verify Signature').item.json.courier_id }}\"] },\n  \"target_channel\": \"push\",\n  \"headings\": { \"en\": \"Delivery complete\" },\n  \"contents\": {\n    \"en\": \"Great job! Delivery confirmed. Your payment will be processed shortly.\"\n  },\n  \"data\": {\n    \"order_id\": \"{{ $('Verify Signature').item.json.order_id }}\",\n    \"type\": \"courier_delivery_confirmed\"\n  }\n}",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 160],
+      "id": "d17bcba9-0e6d-4307-a622-401fec51337d",
+      "name": "OneSignal — Notify Courier"
+    }
+  ],
+  "connections": {
+    "Receive Delivery Confirmed": {
+      "main": [
+        [{ "node": "Verify Signature", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [{ "node": "Route: Valid Signature?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route: Valid Signature?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Handle Error — Signature Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [{ "node": "OneSignal — Notify Consumer", "type": "main", "index": 0 }]
+      ]
+    },
+    "OneSignal — Notify Consumer": {
+      "main": [
+        [{ "node": "OneSignal — Notify Courier", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true }
+}

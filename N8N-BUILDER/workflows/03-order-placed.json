@@ -1,0 +1,224 @@
+{
+  "name": "FoodLink — Order Placed",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-placed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "id": "a5964847-fff9-4b12-852e-7e8eef258a89",
+      "name": "Receive Order Placed",
+      "webhookId": "fl-order-placed"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst webhookData = $input.first().json;\nconst body = webhookData.body;\nconst rawBody = JSON.stringify(body);\nconst signature = (webhookData.headers || {})['x-n8n-signature'];\n\nif (!signature) {\n  return [{ json: { ...body, _valid: false } }];\n}\n\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', $vars.N8N_WEBHOOK_SECRET)\n  .update(rawBody)\n  .digest('hex');\n\nreturn [{ json: { ...body, _valid: signature === expectedSig } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "id": "9b1e5f3c-231c-4b2f-910f-b64f9475142d",
+      "name": "Verify Signature"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "faaa3574-25f4-460e-824b-38ee11f5683d",
+              "leftValue": "={{ $json._valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 300],
+      "id": "ce6b822b-8c77-4d19-9187-edde9cf1c6a8",
+      "name": "Route: Valid Signature?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"received\": true }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 160],
+      "id": "8dfb13c1-20f3-4352-a8ae-81a0d55d6f06",
+      "name": "Respond 200"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Unauthorized\" }",
+        "options": { "responseCode": 401 }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [960, 440],
+      "id": "5b0a7650-9f21-4c29-ab52-3d2f7a246383",
+      "name": "Handle Error — Signature Fail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tempSensitive = $('Verify Signature').item.json.temperature_sensitive;\nconst baseUrl = $vars.SUPABASE_URL;\n\nlet url = `${baseUrl}/rest/v1/courier_profiles?is_available=eq.true&select=user_id`;\nif (tempSensitive) {\n  url += '&insulated_transport_capable=eq.true';\n}\n\nreturn [{ json: { courier_query_url: url } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 160],
+      "id": "97985991-8375-4c18-93ec-7bfba24b5070",
+      "name": "Build Courier Query"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.courier_query_url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 160],
+      "id": "4cbad659-5881-4686-a996-0236e1a243ab",
+      "name": "Supabase — Fetch Eligible Couriers"
+    },
+    {
+      "parameters": {
+        "jsCode": "const couriers = $input.all();\nconst orderPayload = $('Verify Signature').item.json;\n\nconst courierIds = couriers.map(c => c.json.user_id).filter(Boolean);\n\nreturn [{ json: { ...orderPayload, _courier_ids: courierIds, _no_couriers: courierIds.length === 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 160],
+      "id": "fdd9a347-2de0-4d48-9a7a-f0942a58b5b3",
+      "name": "Build Dispatch Payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4ea520f5-0a0f-4165-b3be-30c427d47724",
+              "leftValue": "={{ $json._no_couriers }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1920, 160],
+      "id": "aaee1336-4b93-4d05-a11b-7cee1f0361c9",
+      "name": "Route: Couriers Available?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://onesignal.com/api/v1/notifications",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Basic {{ $vars.ONESIGNAL_REST_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"app_id\": \"{{ $vars.ONESIGNAL_APP_ID }}\",\n  \"include_aliases\": { \"external_id\": {{ JSON.stringify($json._courier_ids) }} },\n  \"target_channel\": \"push\",\n  \"headings\": { \"en\": \"New delivery available\" },\n  \"contents\": {\n    \"en\": \"Pickup: {{ $json.pickup_address.substring(0,40) }} · Earn ${{ ($json.courier_fee_cents / 100).toFixed(2) }}{{ $json.temperature_sensitive ? ' · Cold chain required' : '' }}\"\n  },\n  \"data\": {\n    \"order_id\": \"{{ $json.order_id }}\",\n    \"listing_id\": \"{{ $json.listing_id }}\",\n    \"pickup_lat\": {{ $json.pickup_lat }},\n    \"pickup_lng\": {{ $json.pickup_lng }},\n    \"courier_fee_cents\": {{ $json.courier_fee_cents }},\n    \"temperature_sensitive\": {{ $json.temperature_sensitive }},\n    \"handling_notes\": \"{{ $json.handling_notes || '' }}\",\n    \"type\": \"dispatch_offer\"\n  }\n}",
+        "options": {
+          "response": { "response": { "neverError": true } }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 80],
+      "id": "6916cd85-b51f-4c23-b6f0-9bded9359a02",
+      "name": "OneSignal — Notify Couriers"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json;\nconsole.log('[FoodLink] No eligible couriers for order:', payload.order_id, '| temp_sensitive:', payload.temperature_sensitive);\nreturn [{ json: { order_id: payload.order_id, status: 'no_couriers_available' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 260],
+      "id": "2b38e3d0-18cc-4edd-a053-aa1658405413",
+      "name": "Log — No Couriers Available"
+    }
+  ],
+  "connections": {
+    "Receive Order Placed": {
+      "main": [
+        [{ "node": "Verify Signature", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [{ "node": "Route: Valid Signature?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route: Valid Signature?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Handle Error — Signature Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [{ "node": "Build Courier Query", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Courier Query": {
+      "main": [
+        [{ "node": "Supabase — Fetch Eligible Couriers", "type": "main", "index": 0 }]
+      ]
+    },
+    "Supabase — Fetch Eligible Couriers": {
+      "main": [
+        [{ "node": "Build Dispatch Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Dispatch Payload": {
+      "main": [
+        [{ "node": "Route: Couriers Available?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route: Couriers Available?": {
+      "main": [
+        [{ "node": "OneSignal — Notify Couriers", "type": "main", "index": 0 }],
+        [{ "node": "Log — No Couriers Available", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true }
+}
