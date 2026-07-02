@@ -4,14 +4,15 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { registerAction } from '@/actions/auth';
+import { Store, ShoppingBasket, Bike, Eye, EyeOff, ChevronLeft, type LucideIcon } from 'lucide-react';
 
 type Role = 'donor' | 'consumer' | 'courier';
 type Step = 'role' | 'details';
 
-const ROLES: { value: Role; label: string; description: string; icon: string }[] = [
-  { value: 'donor', label: 'Donor', description: 'I have surplus food to list', icon: '🏪' },
-  { value: 'consumer', label: 'Consumer / Recipient', description: 'I want to buy discounted food', icon: '🛍️' },
-  { value: 'courier', label: 'Courier', description: 'I want to deliver food', icon: '🚲' },
+const ROLES: { value: Role; label: string; description: string; icon: LucideIcon; accent: string; bg: string }[] = [
+  { value: 'donor', label: 'Donor', description: 'I have surplus food to list', icon: Store, accent: 'text-primary', bg: 'bg-primary/10' },
+  { value: 'consumer', label: 'Consumer / Recipient', description: 'I want to buy discounted food', icon: ShoppingBasket, accent: 'text-accent', bg: 'bg-accent/10' },
+  { value: 'courier', label: 'Courier', description: 'I want to deliver food', icon: Bike, accent: 'text-courier', bg: 'bg-courier/10' },
 ];
 
 export default function RegisterPage() {
@@ -20,6 +21,7 @@ export default function RegisterPage() {
   const [role, setRole] = useState<Role | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -42,37 +44,45 @@ export default function RegisterPage() {
 
   if (step === 'role') {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
+      <div className="min-h-screen bg-grain flex flex-col items-center justify-center px-4 py-12">
         <div className="w-full max-w-md">
           {/* Logo + tagline */}
           <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-green-600 mb-4">
-              <span className="text-white text-2xl font-bold">F</span>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">FoodLink</h1>
-            <p className="text-gray-500 mt-1 text-sm">Rescue food. Feed your community.</p>
+            <Link href="/" className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary mb-4 shadow-sm">
+              <span className="text-primary-foreground text-2xl font-display">F</span>
+            </Link>
+            <h1 className="font-display text-2xl text-foreground">Join FoodLink</h1>
+            <p className="text-muted-foreground mt-1 text-sm">Rescue food. Feed your community.</p>
           </div>
 
-          {/* Role cards — UI/UX Donor spec §1 */}
-          <div className="space-y-3">
-            {ROLES.map(r => (
-              <button
-                key={r.value}
-                onClick={() => { setRole(r.value); setStep('details'); }}
-                className="w-full text-left bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-4 hover:border-green-600 hover:shadow-sm transition-all active:scale-[0.99]"
-              >
-                <span className="text-3xl">{r.icon}</span>
-                <div>
-                  <div className="font-semibold text-gray-900">{r.label}</div>
-                  <div className="text-sm text-gray-500">{r.description}</div>
-                </div>
-              </button>
-            ))}
+          {/* Role cards */}
+          <div className="space-y-3" role="radiogroup" aria-label="Choose your role">
+            {ROLES.map(r => {
+              const Icon = r.icon;
+              return (
+                <button
+                  key={r.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={role === r.value}
+                  onClick={() => { setRole(r.value); setStep('details'); }}
+                  className="w-full text-left bg-card border border-border rounded-2xl p-5 flex items-center gap-4 hover:border-primary/40 hover:shadow-md transition-all active:scale-[0.99] min-h-[44px]"
+                >
+                  <div className={`w-12 h-12 shrink-0 rounded-xl ${r.bg} flex items-center justify-center`}>
+                    <Icon className={`w-6 h-6 ${r.accent}`} strokeWidth={2} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-foreground">{r.label}</div>
+                    <div className="text-sm text-muted-foreground">{r.description}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
-          <p className="text-center text-sm text-gray-500 mt-8">
+          <p className="text-center text-sm text-muted-foreground mt-8">
             Already have an account?{' '}
-            <Link href="/login" className="text-green-600 font-medium hover:underline">
+            <Link href="/login" className="text-primary font-medium hover:underline">
               Sign in
             </Link>
           </p>
@@ -81,101 +91,143 @@ export default function RegisterPage() {
     );
   }
 
+  const selectedRole = ROLES.find(r => r.value === role)!;
+  const RoleIcon = selectedRole.icon;
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen bg-grain flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
-        {/* Progress bar — UI/UX spec global component */}
+        {/* Progress bar */}
         <div className="mb-8">
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-            <span>Step 1 of 2 · ~20 seconds remaining</span>
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
             <button
+              type="button"
               onClick={() => setStep('role')}
-              className="text-green-600 hover:underline"
+              className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
             >
-              ← Back
+              <ChevronLeft className="w-3.5 h-3.5" />
+              Back
             </button>
+            <span>Step 2 of 2 · ~20 seconds remaining</span>
           </div>
-          <div className="h-1.5 bg-gray-200 rounded-full">
-            <div className="h-1.5 bg-green-600 rounded-full w-1/2 transition-all" />
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-primary rounded-full w-full transition-all duration-300" />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-8">
-          <h2 className="text-xl font-bold text-gray-900 mb-1">
-            {role === 'donor' ? 'Verify your business' : 'Create your account'}
-          </h2>
-          <p className="text-sm text-gray-500 mb-6">
+        <div className="bg-card rounded-3xl border border-border p-8 shadow-sm">
+          <div className="flex items-center gap-3 mb-1">
+            <div className={`w-9 h-9 shrink-0 rounded-lg ${selectedRole.bg} flex items-center justify-center`}>
+              <RoleIcon className={`w-[18px] h-[18px] ${selectedRole.accent}`} strokeWidth={2} />
+            </div>
+            <h2 className="font-display text-xl text-foreground">
+              {role === 'donor' ? 'Verify your business' : 'Create your account'}
+            </h2>
+          </div>
+          <p className="text-sm text-muted-foreground mb-6 ml-12">
             {role === 'donor'
               ? 'We need your food service permit to activate your account.'
               : 'Full name, email, and phone to get started.'}
           </p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <input type="hidden" name="role" value={role ?? ''} />
 
             {role === 'consumer' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Full name</label>
+                <label htmlFor="fullName" className="block text-sm font-medium text-foreground mb-1.5">
+                  Full name <span className="text-destructive">*</span>
+                </label>
                 <input
+                  id="fullName"
                   name="fullName"
                   type="text"
                   required
+                  autoComplete="name"
                   placeholder="Your name"
-                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
                 />
               </div>
             )}
 
             {role === 'donor' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Business name</label>
+                <label htmlFor="businessName" className="block text-sm font-medium text-foreground mb-1.5">
+                  Business name <span className="text-destructive">*</span>
+                </label>
                 <input
+                  id="businessName"
                   name="businessName"
                   type="text"
                   required
+                  autoComplete="organization"
                   placeholder="Restaurant or business name"
-                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
                 />
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email address</label>
+              <label htmlFor="email" className="block text-sm font-medium text-foreground mb-1.5">
+                Email address <span className="text-destructive">*</span>
+              </label>
               <input
+                id="email"
                 name="email"
                 type="email"
                 required
+                autoComplete="email"
+                inputMode="email"
                 placeholder="you@example.com"
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input
-                name="password"
-                type="password"
-                required
-                minLength={8}
-                placeholder="8+ characters"
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
-              />
+              <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1.5">
+                Password <span className="text-destructive">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                  placeholder="8+ characters"
+                  className="w-full border border-border bg-background rounded-xl px-4 py-3 pr-11 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone number</label>
+              <label htmlFor="phone" className="block text-sm font-medium text-foreground mb-1.5">
+                Phone number <span className="text-destructive">*</span>
+              </label>
               <input
+                id="phone"
                 name="phone"
                 type="tel"
                 required
+                autoComplete="tel"
+                inputMode="tel"
                 placeholder="+1 (555) 000-0000"
-                className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
               />
-              <p className="text-xs text-gray-400 mt-1">We'll send a verification code to this number.</p>
+              <p className="text-xs text-muted-foreground mt-1.5">We&apos;ll send a verification code to this number.</p>
             </div>
 
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+              <div role="alert" className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-xl px-4 py-3">
                 {error}
               </div>
             )}
@@ -183,16 +235,16 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-semibold rounded-full py-3 text-sm transition-colors mt-2"
+              className="w-full min-h-[44px] bg-primary hover:bg-primary-hover disabled:opacity-60 text-primary-foreground font-semibold rounded-full py-3.5 text-sm transition-colors mt-2 shadow-sm"
             >
-              {loading ? 'Creating account...' : 'Continue →'}
+              {loading ? 'Creating account…' : 'Continue →'}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-sm text-gray-500 mt-6">
+        <p className="text-center text-sm text-muted-foreground mt-6">
           Already have an account?{' '}
-          <Link href="/login" className="text-green-600 font-medium hover:underline">
+          <Link href="/login" className="text-primary font-medium hover:underline">
             Sign in
           </Link>
         </p>
