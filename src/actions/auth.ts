@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { z } from 'zod';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { sendOTP, verifyOTP } from '@/lib/twilio';
+import { checkAuthIPLimit } from '@/lib/rate-limit';
 
 const PhoneSchema = z.string().regex(/^\+1\d{10}$/, 'Phone must be in E.164 format (+1XXXXXXXXXX)');
 
@@ -88,6 +89,14 @@ export async function loginAction(formData: FormData): Promise<AuthResult> {
   }
 
   const { email, password } = parsed.data;
+
+  const headerStore = await headers();
+  const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
+  const authCheck = await checkAuthIPLimit(ip);
+  if (!authCheck.allowed) {
+    return { success: false, error: 'Too many failed login attempts. Please try again later.' };
+  }
+
   const supabase = await createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
