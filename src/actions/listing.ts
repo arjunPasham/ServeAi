@@ -245,3 +245,39 @@ export async function getLiveListings(params?: {
 
   return data ?? [];
 }
+
+export async function getListingSignedUploadUrl(
+  listingId: string,
+  filename: string
+): Promise<{ signedUrl: string; path: string } | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const service = await createServiceClient();
+  const path = `listing-photos/${listingId}/${filename}`;
+
+  const { data } = await service.storage
+    .from('listing-photos')
+    .createSignedUploadUrl(path);
+
+  if (!data) return null;
+  return { signedUrl: data.signedUrl, path };
+}
+
+export async function getLiveListingsWithSignedUrls(): Promise<
+  (Awaited<ReturnType<typeof getLiveListings>>[number] & { signedImageUrl: string | null })[]
+> {
+  const listings = await getLiveListings();
+  const service = await createServiceClient();
+
+  return Promise.all(
+    listings.map(async (l) => {
+      if (!l.image_url) return { ...l, signedImageUrl: null };
+      const { data } = await service.storage
+        .from('listing-photos')
+        .createSignedUrl(l.image_url, 3600);
+      return { ...l, signedImageUrl: data?.signedUrl ?? null };
+    })
+  );
+}
