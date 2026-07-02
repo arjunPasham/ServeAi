@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
     .update(rawBody)
     .digest('hex')}`;
 
-  if (sig !== expected) {
+  if (sig.length !== expected.length ||
+      !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 

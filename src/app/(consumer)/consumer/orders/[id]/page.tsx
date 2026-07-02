@@ -3,6 +3,7 @@
 import { use, useEffect, useState, useTransition } from 'react';
 import { getOrderDetails } from '@/actions/payment';
 import { submitPositiveFeedback, submitIssueFeedback, getSignedUploadUrl } from '@/actions/feedback';
+import { getSignedImageUrl } from '@/actions/listing';
 import { centsToDisplay } from '@/lib/pricing';
 
 type OrderDetails = Awaited<ReturnType<typeof getOrderDetails>>;
@@ -23,6 +24,26 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [isPending, startTransition] = useTransition();
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+
+  const listing = order?.listings as unknown as {
+    detected_item: string;
+    estimated_quantity_lbs: number;
+    consumer_price_cents: number;
+    image_url: string | null;
+    handling_notes: string | null;
+    temperature_sensitive: boolean;
+  } | null;
+
+  useEffect(() => {
+    if (!listing?.image_url) { setSignedImageUrl(null); return; }
+    if (listing.image_url.startsWith('http://') || listing.image_url.startsWith('https://')) {
+      setSignedImageUrl(listing.image_url);
+      return;
+    }
+    // Storage key — fetch signed URL via server action
+    getSignedImageUrl(listing.image_url).then(setSignedImageUrl);
+  }, [listing?.image_url]);
 
   useEffect(() => {
     getOrderDetails(id).then(data => {
@@ -74,15 +95,6 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
     input.click();
   }
 
-  const listing = order?.listings as unknown as {
-    detected_item: string;
-    estimated_quantity_lbs: number;
-    consumer_price_cents: number;
-    image_url: string | null;
-    handling_notes: string | null;
-    temperature_sensitive: boolean;
-  } | null;
-
   const disputeWindowActive =
     order?.status === 'delivered' &&
     order.dispute_window_expires_at &&
@@ -119,8 +131,8 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
             {/* Item details */}
             {listing && (
               <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
-                {listing.image_url && (
-                  <img src={listing.image_url} alt={listing.detected_item} className="w-full h-40 object-cover rounded-xl" />
+                {signedImageUrl && (
+                  <img src={signedImageUrl ?? undefined} alt={listing.detected_item} className="w-full h-40 object-cover rounded-xl" />
                 )}
                 <div className="flex justify-between items-start">
                   <div>

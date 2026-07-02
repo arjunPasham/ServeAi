@@ -255,7 +255,7 @@ export async function getListingSignedUploadUrl(
   if (!user) return null;
 
   const service = await createServiceClient();
-  const path = `listing-photos/${listingId}/${filename}`;
+  const path = `${listingId}/${filename}`;
 
   const { data } = await service.storage
     .from('listing-photos')
@@ -274,10 +274,22 @@ export async function getLiveListingsWithSignedUrls(): Promise<
   return Promise.all(
     listings.map(async (l) => {
       if (!l.image_url) return { ...l, signedImageUrl: null };
+      // Only generate signed URLs for storage keys, not external http(s):// URLs
+      if (l.image_url.startsWith('http://') || l.image_url.startsWith('https://')) {
+        return { ...l, signedImageUrl: l.image_url };
+      }
       const { data } = await service.storage
         .from('listing-photos')
         .createSignedUrl(l.image_url, 3600);
       return { ...l, signedImageUrl: data?.signedUrl ?? null };
     })
   );
+}
+
+export async function getSignedImageUrl(path: string): Promise<string | null> {
+  const service = await createServiceClient();
+  const { data } = await service.storage
+    .from('listing-photos')
+    .createSignedUrl(path, 3600);
+  return data?.signedUrl ?? null;
 }

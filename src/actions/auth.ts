@@ -25,6 +25,7 @@ export type AuthResult = {
   success: boolean;
   error?: string;
   redirectTo?: string;
+  retryAfter?: number;
 };
 
 // Single source of truth for role → dashboard routes used by all auth actions
@@ -92,15 +93,20 @@ export async function loginAction(formData: FormData): Promise<AuthResult> {
 
   const headerStore = await headers();
   const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
-  const authCheck = await checkAuthIPLimit(ip);
-  if (!authCheck.allowed) {
-    return { success: false, error: 'Too many failed login attempts. Please try again later.' };
-  }
 
   const supabase = await createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
   if (error || !data.user) {
+    const authCheck = await checkAuthIPLimit(ip);
+    if (!authCheck.allowed) {
+      return {
+        success: false,
+        error: 'Too many failed login attempts. Please try again later.',
+        retryAfter: authCheck.retryAfter,
+      };
+    }
     return { success: false, error: 'Invalid email or password' };
   }
 
