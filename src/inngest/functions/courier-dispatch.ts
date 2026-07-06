@@ -5,7 +5,6 @@ import { stripe } from '@/lib/stripe';
 
 // Maximum dispatch attempts before we give up and refund the consumer
 const MAX_DISPATCH_ATTEMPTS = 4; // 4 × 5-min windows = 20 minutes
-const DISPATCH_WINDOW_MS = 5 * 60 * 1000;
 
 export const courierDispatch = inngest.createFunction(
   { id: 'courier-dispatch', retries: 3 },
@@ -117,7 +116,10 @@ export const courierDispatch = inngest.createFunction(
       }
 
       // Revert listing to live
-      await supabase.rpc('revert_listing_to_live', { p_listing_id: order.listing_id });
+      await supabase.rpc('revert_listing_to_live', {
+        p_listing_id: order.listing_id,
+        p_reason: 'no_courier_available',
+      });
 
       // Update order status
       await supabase

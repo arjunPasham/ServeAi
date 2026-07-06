@@ -1,7 +1,6 @@
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 import { createServiceClient } from '@/lib/supabase/server';
-import { inngest } from '@/inngest/client';
 
 export async function POST(req: Request) {
   const body = await req.text();
@@ -53,7 +52,10 @@ export async function POST(req: Request) {
       const listingId = paymentIntent.metadata.listing_id;
 
       if (listingId) {
-        await service.rpc('revert_listing_to_live', { p_listing_id: listingId });
+        await service.rpc('revert_listing_to_live', {
+          p_listing_id: listingId,
+          p_reason: 'payment_failed',
+        });
 
         // Mark order as refunded
         await service

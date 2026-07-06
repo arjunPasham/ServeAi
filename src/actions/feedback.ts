@@ -6,6 +6,14 @@ export type FeedbackResult =
   | { success: true }
   | { success: false; error: string };
 
+// Map submit_feedback RPC exceptions (010_feedback_guards.sql) to stable codes
+function mapFeedbackError(message: string | undefined): string {
+  if (message?.includes('DISPUTE_WINDOW_EXPIRED')) return 'DISPUTE_WINDOW_EXPIRED';
+  if (message?.includes('ORDER_NOT_FOUND_OR_NOT_DELIVERED')) return 'ORDER_NOT_FOUND_OR_NOT_DELIVERED';
+  if (message?.includes('PHOTO_REQUIRED')) return 'PHOTO_REQUIRED';
+  return 'SERVER_ERROR';
+}
+
 export async function submitPositiveFeedback(orderId: string): Promise<FeedbackResult> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -19,7 +27,7 @@ export async function submitPositiveFeedback(orderId: string): Promise<FeedbackR
     p_photo_url: null,
   });
 
-  if (error) return { success: false, error: 'SERVER_ERROR' };
+  if (error) return { success: false, error: mapFeedbackError(error.message) };
   return { success: true };
 }
 
@@ -41,7 +49,7 @@ export async function submitIssueFeedback(
     p_photo_url: photoUrl,
   });
 
-  if (error) return { success: false, error: 'SERVER_ERROR' };
+  if (error) return { success: false, error: mapFeedbackError(error.message) };
   return { success: true };
 }
 
@@ -54,6 +62,16 @@ export async function getSignedUploadUrl(
   if (!user) return null;
 
   const service = await createServiceClient();
+
+  // Only the consumer who placed the order may upload into its dispute-photos path
+  const { data: order } = await service
+    .from('orders')
+    .select('id')
+    .eq('id', orderId)
+    .eq('consumer_id', user.id)
+    .single();
+  if (!order) return null;
+
   const path = `dispute-photos/${orderId}/${filename}`;
 
   const { data } = await service.storage

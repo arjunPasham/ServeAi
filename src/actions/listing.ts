@@ -220,15 +220,10 @@ export async function getDonorListings() {
   return data ?? [];
 }
 
-// Consumer browse: live listings with geospatial obfuscation
-export async function getLiveListings(params?: {
-  lat?: number;
-  lng?: number;
-  radiusMeters?: number;
-}) {
-  const supabase = await createClient();
-
-  // Use service client for geospatial query
+// Consumer browse: latest live listings.
+// NOTE: not yet location-filtered — geo-radius browse is a pending feature
+// (needs a PostGIS RPC like get_nearest_couriers).
+export async function getLiveListings() {
   const service = await createServiceClient();
 
   const { data } = await service
@@ -255,6 +250,16 @@ export async function getListingSignedUploadUrl(
   if (!user) return null;
 
   const service = await createServiceClient();
+
+  // Only the listing's donor may upload photos for it
+  const { data: owned } = await service
+    .from('listings')
+    .select('id')
+    .eq('id', listingId)
+    .eq('donor_id', user.id)
+    .single();
+  if (!owned) return null;
+
   const path = `${listingId}/${filename}`;
 
   const { data } = await service.storage
