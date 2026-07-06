@@ -38,10 +38,14 @@ export default function BrowsePage() {
         return;
       }
 
-      // Redirect to checkout — Stripe.js handles card collection
-      // clientSecret would go to Stripe Elements for card collection in the real UI
-      // For now navigate to order confirmation
-      window.location.href = `/consumer/orders/${result.orderId}`;
+      if (result.checkout && result.clientSecret) {
+        // Real Stripe mode: collect card details before dispatch happens
+        sessionStorage.setItem(`checkout:${result.orderId}`, result.clientSecret);
+        window.location.href = `/consumer/checkout/${result.orderId}`;
+      } else {
+        // Dev mode: payment simulated, dispatch already underway
+        window.location.href = `/consumer/orders/${result.orderId}`;
+      }
     });
   }
 
@@ -71,24 +75,21 @@ export default function BrowsePage() {
             <p className="text-sm text-gray-400">Check back soon — donors post daily</p>
           </div>
         ) : (
-          listings.map(listing => {
-            const donorProfiles = (listing as Record<string, unknown>).donor_profiles as { type: string } | null;
-            return (
-              <ListingCard
-                key={listing.id}
-                id={listing.id}
-                detectedItem={listing.detected_item}
-                estimatedQuantityLbs={Number(listing.estimated_quantity_lbs)}
-                consumerPriceCents={listing.consumer_price_cents}
-                temperatureSensitive={listing.temperature_sensitive}
-                imageUrl={listing.image_url}
-                donorType={(donorProfiles?.type ?? 'commercial') as 'commercial' | 'residential'}
-                safetyExpiresAt={listing.safety_expires_at}
-                onClaim={handleClaim}
-                claiming={claimingId === listing.id}
-              />
-            );
-          })
+          listings.map(listing => (
+            <ListingCard
+              key={listing.id}
+              id={listing.id}
+              detectedItem={listing.detected_item}
+              estimatedQuantityLbs={Number(listing.estimated_quantity_lbs)}
+              consumerPriceCents={listing.consumer_price_cents}
+              temperatureSensitive={listing.temperature_sensitive}
+              imageUrl={listing.image_url}
+              donorType={(listing.donor_type ?? 'commercial') as 'commercial' | 'residential'}
+              safetyExpiresAt={listing.safety_expires_at}
+              onClaim={handleClaim}
+              claiming={claimingId === listing.id}
+            />
+          ))
         )}
       </main>
     </div>

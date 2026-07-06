@@ -19,18 +19,41 @@ async function checkAdmin() {
   return user;
 }
 
+// Server actions are HTTP endpoints callable by any authenticated user — each
+// one must verify the admin role itself; the page-level check doesn't cover them.
+async function requireAdmin(): Promise<boolean> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const service = await createServiceClient();
+  const { data } = await service
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  return data?.role === 'admin';
+}
+
 async function updateCommodityPrice(formData: FormData) {
   'use server';
+  if (!(await requireAdmin())) return;
+
   const category = formData.get('category') as string;
-  const pricePerLb = formData.get('price_per_lb') as string;
-  const retailBenchmarkPerLb = formData.get('retail_benchmark_per_lb') as string;
+  const pricePerLb = Number(formData.get('price_per_lb'));
+  const retailBenchmarkPerLb = Number(formData.get('retail_benchmark_per_lb'));
+  if (!Number.isFinite(pricePerLb) || pricePerLb <= 0 ||
+      !Number.isFinite(retailBenchmarkPerLb) || retailBenchmarkPerLb <= 0) {
+    return;
+  }
 
   const service = await createServiceClient();
   await service
     .from('usda_commodity_prices')
     .update({
-      price_per_lb: Number(pricePerLb),
-      retail_benchmark_per_lb: Number(retailBenchmarkPerLb),
+      price_per_lb: pricePerLb,
+      retail_benchmark_per_lb: retailBenchmarkPerLb,
       updated_at: new Date().toISOString(),
     })
     .eq('category', category);
@@ -40,6 +63,8 @@ async function updateCommodityPrice(formData: FormData) {
 
 async function verifyDonorLicense(formData: FormData) {
   'use server';
+  if (!(await requireAdmin())) return;
+
   const userId = formData.get('user_id') as string;
 
   const service = await createServiceClient();

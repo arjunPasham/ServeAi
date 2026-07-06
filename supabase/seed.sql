@@ -28,4 +28,3 @@ ON CONFLICT (category) DO UPDATE
   SET price_per_lb            = EXCLUDED.price_per_lb,
       retail_benchmark_per_lb = EXCLUDED.retail_benchmark_per_lb,
       updated_at              = NOW();
-2

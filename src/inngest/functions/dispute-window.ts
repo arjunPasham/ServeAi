@@ -28,6 +28,29 @@ export const disputeWindow = inngest.createFunction(
       return { skipped: true, reason: 'donor_transfer_already_exists' };
     }
 
+    // Donor has no connected Stripe account (or charge is missing in dev mode):
+    // record it for manual payout instead of throwing into a retry loop that
+    // never succeeds and never alerts anyone.
+    if (!event.data.donor_stripe_account_id || !event.data.stripe_charge_id) {
+      await step.run('record-skipped-payout', async () => {
+        const supabase = await createServiceClient();
+        await supabase.from('audit_log').insert({
+          entity_type: 'order',
+          entity_id: event.data.order_id,
+          event_type: 'donor_payout_skipped',
+          actor_id: null,
+          actor_role: 'system',
+          payload: {
+            amount_cents: event.data.donor_payout_cents,
+            has_stripe_account: Boolean(event.data.donor_stripe_account_id),
+            has_charge: Boolean(event.data.stripe_charge_id),
+            action_required: 'manual_payout',
+          },
+        });
+      });
+      return { skipped: true, reason: 'missing_stripe_account_or_charge' };
+    }
+
     const transfer = await step.run('release-donor-payout', async () => {
       return transferToDonor({
         amountCents: event.data.donor_payout_cents,

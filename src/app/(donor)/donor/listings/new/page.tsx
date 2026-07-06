@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { getListingPricing, createDraftListing, publishListing } from '@/actions/listing';
 import { isTemperatureSensitive } from '@/lib/temperature-map';
 import { PricingSlider } from '@/components/listing/PricingSlider';
+import { FoodScanner, ScanSelection } from '@/components/FoodScanner';
 import { useRouter } from 'next/navigation';
 
 const USDA_CATEGORIES = [
@@ -21,21 +22,30 @@ const CATEGORY_LABEL: Record<string, string> = {
   PRODUCE_ROOT: 'Root Vegetables', GRAIN: 'Grain', BAKED_GOOD: 'Baked Good', OTHER: 'Other',
 };
 
-type Step = 'details' | 'pricing' | 'attest';
+type Step = 'scan' | 'details' | 'pricing' | 'attest';
 
 export default function NewListingPage() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>('details');
+  const [step, setStep] = useState<Step>('scan');
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  // Step 1 fields
+  // Step 1 fields — prefilled by the AI scan, editable in the details step
   const [detectedItem, setDetectedItem] = useState('');
   const [quantityLbs, setQuantityLbs] = useState('');
   const [category, setCategory] = useState('');
   const [handlingNotes, setHandlingNotes] = useState('');
-  // image_url is partner's AI scan — placeholder for manual entry
+  const [confidenceScore, setConfidenceScore] = useState(1.0);
   const [imageUrl, setImageUrl] = useState('https://placehold.co/400x300');
+
+  function handleScanSelect(selection: ScanSelection) {
+    setDetectedItem(selection.detectedItem);
+    setQuantityLbs(String(selection.quantityLbs));
+    setCategory(selection.usdaCategory);
+    setConfidenceScore(selection.confidence);
+    if (selection.imageUrl) setImageUrl(selection.imageUrl);
+    setStep('details');
+  }
 
   // Step 2 pricing
   const [pricingData, setPricingData] = useState<Awaited<ReturnType<typeof getListingPricing>> | null>(null);
@@ -49,7 +59,6 @@ export default function NewListingPage() {
 
   // Step 3 attestation
   const [safetyAttested, setSafetyAttested] = useState(false);
-  const [listingId, setListingId] = useState<string | null>(null);
 
   function handleFetchPricing() {
     setError(null);
@@ -88,7 +97,7 @@ export default function NewListingPage() {
       const draftResult = await createDraftListing({
         detectedItem,
         estimatedQuantityLbs: Number(quantityLbs),
-        confidenceScore: 1.0,
+        confidenceScore,
         usdaCategory: category,
         imageUrl,
         donorPayoutCents: confirmedPricing.donorPayoutCents,
@@ -128,14 +137,15 @@ export default function NewListingPage() {
       <header className="bg-white border-b border-gray-100 px-4 py-4 sticky top-0 z-10">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <button onClick={() => {
-            if (step === 'pricing') setStep('details');
+            if (step === 'details') setStep('scan');
+            else if (step === 'pricing') setStep('details');
             else if (step === 'attest') setStep('pricing');
             else router.push('/donor/dashboard');
           }} className="text-gray-400 hover:text-gray-600">
             ←
           </button>
           <h1 className="text-lg font-bold text-gray-900">
-            {step === 'details' ? 'Food details' : step === 'pricing' ? 'Set pricing' : 'Safety check'}
+            {step === 'scan' ? 'Scan your food' : step === 'details' ? 'Food details' : step === 'pricing' ? 'Set pricing' : 'Safety check'}
           </h1>
         </div>
       </header>
@@ -147,8 +157,21 @@ export default function NewListingPage() {
           </div>
         )}
 
+        {step === 'scan' && (
+          <FoodScanner
+            onSelect={handleScanSelect}
+            onManualEntry={() => setStep('details')}
+          />
+        )}
+
         {step === 'details' && (
           <div className="space-y-4">
+            {imageUrl && !imageUrl.includes('placehold.co') && (
+              <div className="h-40 bg-gray-100 rounded-2xl overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imageUrl} alt={detectedItem || 'Scanned food'} className="w-full h-full object-cover" />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 What food are you donating? <span className="text-red-500">*</span>

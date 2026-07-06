@@ -1,10 +1,22 @@
 'use server';
 
+import { randomUUID } from 'crypto';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 export type FeedbackResult =
   | { success: true }
   | { success: false; error: string };
+
+// Map RPC exceptions (009_security_hardening.sql) to stable client codes
+function mapFeedbackError(message: string | undefined): string {
+  if (!message) return 'SERVER_ERROR';
+  if (message.includes('DISPUTE_WINDOW_CLOSED')) return 'DISPUTE_WINDOW_CLOSED';
+  if (message.includes('FEEDBACK_ALREADY_SUBMITTED')) return 'FEEDBACK_ALREADY_SUBMITTED';
+  if (message.includes('ORDER_NOT_ELIGIBLE')) return 'ORDER_NOT_ELIGIBLE';
+  if (message.includes('ORDER_NOT_FOUND')) return 'ORDER_NOT_FOUND';
+  if (message.includes('PHOTO_REQUIRED')) return 'PHOTO_REQUIRED';
+  return 'SERVER_ERROR';
+}
 
 export async function submitPositiveFeedback(orderId: string): Promise<FeedbackResult> {
   const supabase = await createClient();
@@ -19,7 +31,7 @@ export async function submitPositiveFeedback(orderId: string): Promise<FeedbackR
     p_photo_url: null,
   });
 
-  if (error) return { success: false, error: 'SERVER_ERROR' };
+  if (error) return { success: false, error: mapFeedbackError(error.message) };
   return { success: true };
 }
 
@@ -41,7 +53,7 @@ export async function submitIssueFeedback(
     p_photo_url: photoUrl,
   });
 
-  if (error) return { success: false, error: 'SERVER_ERROR' };
+  if (error) return { success: false, error: mapFeedbackError(error.message) };
   return { success: true };
 }
 
@@ -54,7 +66,19 @@ export async function getSignedUploadUrl(
   if (!user) return null;
 
   const service = await createServiceClient();
-  const path = `dispute-photos/${orderId}/${filename}`;
+
+  // Only the consumer who placed the order may upload dispute evidence for it
+  const { data: order } = await service
+    .from('orders')
+    .select('id')
+    .eq('id', orderId)
+    .eq('consumer_id', user.id)
+    .maybeSingle();
+  if (!order) return null;
+
+  // Server-generated key: never trust a client filename in a storage path
+  const ext = filename.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+  const path = `dispute-photos/${orderId}/${randomUUID()}.${ext}`;
 
   const { data } = await service.storage
     .from('listing-photos')

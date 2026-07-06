@@ -127,16 +127,75 @@ export default function RegisterPage() {
             )}
 
             {role === 'donor' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Business name</label>
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Business name</label>
+                  <input
+                    name="businessName"
+                    type="text"
+                    placeholder="Restaurant or business name"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Leave blank if you&apos;re donating as a household.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Food service permit / license #</label>
+                  <input
+                    name="licenseNumber"
+                    type="text"
+                    placeholder="Required for businesses"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Pickup address</label>
+                  <input
+                    name="address"
+                    type="text"
+                    required
+                    placeholder="Street, city, state, ZIP"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Only shared with your assigned courier — never shown publicly.</p>
+                </div>
+              </>
+            )}
+
+            {role === 'consumer' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Organization name (optional)</label>
+                  <input
+                    name="organizationName"
+                    type="text"
+                    placeholder="Shelter or food bank name — leave blank for household"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Delivery address</label>
+                  <input
+                    name="address"
+                    type="text"
+                    required
+                    placeholder="Street, city, state, ZIP"
+                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  />
+                </div>
+              </>
+            )}
+
+            {role === 'courier' && (
+              <label className="flex items-start gap-3 cursor-pointer bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
                 <input
-                  name="businessName"
-                  type="text"
-                  required
-                  placeholder="Restaurant or business name"
-                  className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
+                  name="insulated"
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-600"
                 />
-              </div>
+                <span className="text-sm text-gray-700">
+                  I have an insulated bag or cooler for temperature-sensitive deliveries
+                </span>
+              </label>
             )}
 
             <div>
@@ -168,10 +227,10 @@ export default function RegisterPage() {
                 name="phone"
                 type="tel"
                 required
-                placeholder="+1 (555) 000-0000"
+                placeholder="(555) 000-0000"
                 className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-600"
               />
-              <p className="text-xs text-gray-400 mt-1">We'll send a verification code to this number.</p>
+              <p className="text-xs text-gray-400 mt-1">US numbers only — any format works. We&apos;ll send a verification code.</p>
             </div>
 
             {error && (

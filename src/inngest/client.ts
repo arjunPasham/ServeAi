@@ -7,6 +7,7 @@ export const inngest = new Inngest({
 
 // Typed event definitions for type safety across functions
 export type FoodLinkEvents = {
+  // Fired after payment is captured (webhook in real mode, claim action in dev mode)
   'dispatch/initiated': {
     data: {
       order_id: string;
@@ -17,6 +18,24 @@ export type FoodLinkEvents = {
       requires_cold_chain: boolean;
       detected_item: string;
       consumer_price_cents: number;
+    };
+  };
+  // Fired by accept/decline server actions so the dispatch loop can react
+  // immediately instead of sleeping out the full 5-minute window
+  'dispatch/responded': {
+    data: {
+      dispatch_event_id: string;
+      order_id: string;
+      courier_id: string;
+      response: 'accepted' | 'declined';
+    };
+  };
+  // Fired at claim time in real-payment mode; starts the payment watchdog
+  'order/claimed': {
+    data: {
+      order_id: string;
+      listing_id: string;
+      payment_intent_id: string;
     };
   };
   'delivery/confirmed': {

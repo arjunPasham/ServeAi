@@ -1,14 +1,15 @@
 /**
- * POST /api/scan — accepts a food photo and returns a structured FoodScanResult.
+ * POST /api/scan — accepts a food photo and returns a structured FoodScanResult
+ * plus a hosted image URL for the listing record.
  *
  * Runs on the Node.js runtime (Gemini SDK + Buffer). The GEMINI_API_KEY stays
  * server-side; the image never leaves this server except to call Gemini.
- *
- * NOTE: built for isolated testing of the vision pipeline — not yet wired into
- * any live listing/checkout flow.
+ * Requires an authenticated session — this endpoint spends Gemini quota.
  */
 
+import { randomUUID } from 'crypto';
 import { scanFoodImage } from '@/services/foodVision';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +22,21 @@ const ALLOWED_TYPES = new Set([
   'image/heif',
 ]);
 
+const EXT_BY_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+};
+
 export async function POST(req: Request): Promise<Response> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return Response.json({ error: 'Not authenticated.' }, { status: 401 });
+  }
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -56,10 +71,31 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const arrayBuffer = await image.arrayBuffer();
-  const imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+  const buffer = Buffer.from(arrayBuffer);
+  const imageBase64 = buffer.toString('base64');
 
   const result = await scanFoodImage(imageBase64, image.type);
 
+  // Persist the photo so the listing shows the real food, not a placeholder.
+  // Server-generated path — the client never controls storage keys.
+  let imageUrl: string | null = null;
+  try {
+    const service = await createServiceClient();
+    const path = `scans/${user.id}/${randomUUID()}.${EXT_BY_TYPE[image.type] ?? 'jpg'}`;
+    const { error: uploadError } = await service.storage
+      .from('listing-photos')
+      .upload(path, buffer, { contentType: image.type });
+    if (!uploadError) {
+      const { data } = service.storage.from('listing-photos').getPublicUrl(path);
+      imageUrl = data.publicUrl;
+    }
+  } catch {
+    // Non-fatal: scan results are still useful without a hosted image
+  }
+
   // 422 signals "we have a result but it should not be auto-trusted".
-  return Response.json(result, { status: result.needsManualReview ? 422 : 200 });
+  return Response.json(
+    { ...result, imageUrl },
+    { status: result.needsManualReview ? 422 : 200 },
+  );
 }
