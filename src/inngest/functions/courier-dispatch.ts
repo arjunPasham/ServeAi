@@ -111,7 +111,7 @@ export const courierDispatch = inngest.createFunction(
       if (paymentIntent.status === 'succeeded' && paymentIntent.latest_charge) {
         await stripe.refunds.create({
           charge: paymentIntent.latest_charge as string,
-          reason: 'fraudulent', // closest Stripe reason for "no courier available"
+          reason: 'requested_by_customer', // no courier available — not a fraud signal
           metadata: { order_id: event.data.order_id, reason: 'no_courier_available' },
         });
       }

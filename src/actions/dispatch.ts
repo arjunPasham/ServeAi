@@ -70,7 +70,7 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
   const { data: order } = await service
     .from('orders')
     .select(`
-      id, stripe_payment_intent_id, stripe_charge_id,
+      id, consumer_id, stripe_payment_intent_id, stripe_charge_id,
       listings!inner(
         id, detected_item, donor_payout_cents, courier_fee_cents,
         donor_id, handling_notes,
@@ -149,7 +149,7 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
     data: {
       order_id: orderId,
       listing_id: listing.id,
-      consumer_id: '', // fetched below
+      consumer_id: order.consumer_id,
       courier_id: user.id,
       donor_stripe_account_id: listing.donor_profiles?.stripe_account_id ?? '',
       courier_stripe_account_id: courierProfile?.stripe_account_id ?? '',
@@ -164,7 +164,7 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
   await notifyDeliveryConfirmed({
     order_id: orderId,
     listing_id: listing.id,
-    consumer_id: '',
+    consumer_id: order.consumer_id,
     courier_id: user.id,
     delivered_at: new Date().toISOString(),
   });
