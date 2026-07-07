@@ -7,13 +7,13 @@ export type FeedbackResult =
   | { success: true }
   | { success: false; error: string };
 
-// Map RPC exceptions (009_security_hardening.sql) to stable client codes
+// Map submit_feedback RPC exceptions (011_merge_reconciliation.sql — the
+// consolidated version of 009/010) to stable client codes
 function mapFeedbackError(message: string | undefined): string {
   if (!message) return 'SERVER_ERROR';
-  if (message.includes('DISPUTE_WINDOW_CLOSED')) return 'DISPUTE_WINDOW_CLOSED';
+  if (message.includes('DISPUTE_WINDOW_EXPIRED')) return 'DISPUTE_WINDOW_EXPIRED';
   if (message.includes('FEEDBACK_ALREADY_SUBMITTED')) return 'FEEDBACK_ALREADY_SUBMITTED';
-  if (message.includes('ORDER_NOT_ELIGIBLE')) return 'ORDER_NOT_ELIGIBLE';
-  if (message.includes('ORDER_NOT_FOUND')) return 'ORDER_NOT_FOUND';
+  if (message.includes('ORDER_NOT_FOUND_OR_NOT_DELIVERED')) return 'ORDER_NOT_FOUND_OR_NOT_DELIVERED';
   if (message.includes('PHOTO_REQUIRED')) return 'PHOTO_REQUIRED';
   return 'SERVER_ERROR';
 }

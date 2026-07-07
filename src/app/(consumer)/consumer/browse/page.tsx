@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { getLiveListings } from '@/actions/listing';
+import { getLiveListingsWithSignedUrls } from '@/actions/listing';
 import { claimListing } from '@/actions/payment';
 import { ListingCard } from '@/components/listing/ListingCard';
 
-type LiveListing = Awaited<ReturnType<typeof getLiveListings>>[number];
+type LiveListing = Awaited<ReturnType<typeof getLiveListingsWithSignedUrls>>[number];
 
 export default function BrowsePage() {
   const [listings, setListings] = useState<LiveListing[]>([]);
@@ -15,7 +15,7 @@ export default function BrowsePage() {
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    getLiveListings().then(data => {
+    getLiveListingsWithSignedUrls().then(data => {
       setListings(data);
       setLoading(false);
     });
@@ -83,7 +83,7 @@ export default function BrowsePage() {
               estimatedQuantityLbs={Number(listing.estimated_quantity_lbs)}
               consumerPriceCents={listing.consumer_price_cents}
               temperatureSensitive={listing.temperature_sensitive}
-              imageUrl={listing.image_url}
+              imageUrl={listing.signedImageUrl}
               donorType={(listing.donor_type ?? 'commercial') as 'commercial' | 'residential'}
               safetyExpiresAt={listing.safety_expires_at}
               onClaim={handleClaim}

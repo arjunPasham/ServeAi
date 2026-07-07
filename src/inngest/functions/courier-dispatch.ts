@@ -117,7 +117,10 @@ export const courierDispatch = inngest.createFunction(
         reason: 'no_courier_available',
       });
 
-      await supabase.rpc('revert_listing_to_live', { p_listing_id: order.listing_id });
+      await supabase.rpc('revert_listing_to_live', {
+        p_listing_id: order.listing_id,
+        p_reason: 'no_courier_available',
+      });
 
       await supabase
         .from('orders')

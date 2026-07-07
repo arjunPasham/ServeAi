@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { sendOTP, verifyOTP } from '@/lib/twilio';
 import { validateUSAddress } from '@/lib/smarty';
+import { checkAuthIPLimit } from '@/lib/rate-limit';
 
 // Accept anything a human types ("(555) 123-4567", "555-123-4567", "+1 555…")
 // and normalize to E.164 (+1XXXXXXXXXX). Returns null if not a US number.
@@ -38,6 +39,7 @@ export type AuthResult = {
   success: boolean;
   error?: string;
   redirectTo?: string;
+  retryAfter?: number;
 };
 
 // Single source of truth for role → dashboard routes used by all auth actions
@@ -213,9 +215,26 @@ export async function loginAction(formData: FormData): Promise<AuthResult> {
   }
 
   const { email, password } = parsed.data;
+
+  const headerStore = await headers();
+  const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
+
+  // Rate-limit BEFORE attempting sign-in. Checking only after a failure (the
+  // previous version) throttled the error message while letting the actual
+  // password-guessing calls through unbounded.
+  const authCheck = await checkAuthIPLimit(ip);
+  if (!authCheck.allowed) {
+    return {
+      success: false,
+      error: 'Too many login attempts. Please try again later.',
+      retryAfter: authCheck.retryAfter,
+    };
+  }
+
   const supabase = await createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
   if (error || !data.user) {
     return { success: false, error: 'Invalid email or password' };
   }

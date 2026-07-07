@@ -40,6 +40,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS listings_pricing_lock ON listings;
 CREATE TRIGGER listings_pricing_lock
   BEFORE UPDATE ON listings
   FOR EACH ROW EXECUTE FUNCTION prevent_pricing_update();

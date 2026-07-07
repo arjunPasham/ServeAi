@@ -87,7 +87,10 @@ export async function POST(req: Request) {
       const listingId = paymentIntent.metadata.listing_id;
 
       if (listingId) {
-        await service.rpc('revert_listing_to_live', { p_listing_id: listingId });
+        await service.rpc('revert_listing_to_live', {
+          p_listing_id: listingId,
+          p_reason: 'payment_canceled',
+        });
         await service
           .from('orders')
           .update({ status: 'refunded' })

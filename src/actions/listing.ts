@@ -245,7 +245,8 @@ export async function getDonorListings() {
 // Consumer browse: live listings with donor origin type (never the address).
 // NOTE: donor_profiles cannot be embedded via PostgREST here — listings and
 // donor_profiles are only related through users (no direct FK) — so the origin
-// type is merged in with a second query.
+// type is merged in with a second query. Not yet location-filtered — geo-radius
+// browse is a pending feature (needs a PostGIS RPC like get_nearest_couriers).
 export async function getLiveListings() {
   const service = await createServiceClient();
 
@@ -274,4 +275,97 @@ export async function getLiveListings() {
     ...l,
     donor_type: typeByDonor.get(l.donor_id as string) ?? 'commercial',
   }));
+}
+
+export async function getListingSignedUploadUrl(
+  listingId: string,
+  filename: string
+): Promise<{ signedUrl: string; path: string } | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const service = await createServiceClient();
+
+  // Only the listing's donor may upload photos for it
+  const { data: owned } = await service
+    .from('listings')
+    .select('id')
+    .eq('id', listingId)
+    .eq('donor_id', user.id)
+    .single();
+  if (!owned) return null;
+
+  const path = `${listingId}/${filename}`;
+
+  const { data } = await service.storage
+    .from('listing-photos')
+    .createSignedUploadUrl(path);
+
+  if (!data) return null;
+  return { signedUrl: data.signedUrl, path };
+}
+
+export async function getLiveListingsWithSignedUrls(): Promise<
+  (Awaited<ReturnType<typeof getLiveListings>>[number] & { signedImageUrl: string | null })[]
+> {
+  const listings = await getLiveListings();
+  const service = await createServiceClient();
+
+  return Promise.all(
+    listings.map(async (l) => {
+      if (!l.image_url) return { ...l, signedImageUrl: null };
+      // Only generate signed URLs for storage keys, not external http(s):// URLs
+      if (l.image_url.startsWith('http://') || l.image_url.startsWith('https://')) {
+        return { ...l, signedImageUrl: l.image_url };
+      }
+      const { data } = await service.storage
+        .from('listing-photos')
+        .createSignedUrl(l.image_url, 3600);
+      return { ...l, signedImageUrl: data?.signedUrl ?? null };
+    })
+  );
+}
+
+// Sign a listing image for a caller who is party to it. This action previously
+// had NO auth or scope check — any caller could mint signed URLs for every key
+// in the private bucket, including dispute evidence, defeating the point of
+// making the bucket private (SH-3).
+export async function getSignedImageUrl(path: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Dispute evidence is never signed through this action (admin/ops only)
+  if (path.startsWith('dispute-photos/')) return null;
+
+  const service = await createServiceClient();
+
+  // The path must be the image of a listing the caller is party to:
+  // the donor who owns it, anyone while it's live on the marketplace,
+  // or the consumer/courier attached to its order.
+  const { data: listing } = await service
+    .from('listings')
+    .select('id, donor_id, status')
+    .eq('image_url', path)
+    .maybeSingle();
+  if (!listing) return null;
+
+  let allowed = listing.donor_id === user.id || listing.status === 'live';
+  if (!allowed) {
+    const { data: order } = await service
+      .from('orders')
+      .select('id')
+      .eq('listing_id', listing.id)
+      .or(`consumer_id.eq.${user.id},courier_id.eq.${user.id}`)
+      .limit(1)
+      .maybeSingle();
+    allowed = Boolean(order);
+  }
+  if (!allowed) return null;
+
+  const { data } = await service.storage
+    .from('listing-photos')
+    .createSignedUrl(path, 3600);
+  return data?.signedUrl ?? null;
 }

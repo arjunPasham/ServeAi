@@ -77,5 +77,6 @@ coverage/
 
 # ─── Claude Code (local session state only) ──────────────────────────────────
 .claude/settings.local.json
+.superpowers/
 .next/
 node_modules/

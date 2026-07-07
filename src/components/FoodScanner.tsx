@@ -14,7 +14,10 @@ export interface ScanSelection {
   quantityLbs: number;
   usdaCategory: string;
   confidence: number;
-  imageUrl: string | null;
+  // Storage key persisted on the listing (bucket is private — readers sign it)
+  imagePath: string | null;
+  // Short-lived signed URL for immediate display in the form
+  previewUrl: string | null;
 }
 
 interface FoodScannerProps {
@@ -25,7 +28,13 @@ interface FoodScannerProps {
 type ScanState =
   | { phase: 'idle' }
   | { phase: 'scanning' }
-  | { phase: 'results'; result: FoodScanResult; imageUrl: string | null; needsReview: boolean }
+  | {
+      phase: 'results';
+      result: FoodScanResult;
+      imagePath: string | null;
+      previewUrl: string | null;
+      needsReview: boolean;
+    }
   | { phase: 'error'; message: string };
 
 export function FoodScanner({ onSelect, onManualEntry }: FoodScannerProps) {
@@ -49,7 +58,7 @@ export function FoodScanner({ onSelect, onManualEntry }: FoodScannerProps) {
         return;
       }
 
-      const result = body as FoodScanResult & { imageUrl?: string | null };
+      const result = body as FoodScanResult & { imagePath?: string | null; previewUrl?: string | null };
       if (!result.items?.length) {
         setState({
           phase: 'error',
@@ -61,7 +70,8 @@ export function FoodScanner({ onSelect, onManualEntry }: FoodScannerProps) {
       setState({
         phase: 'results',
         result,
-        imageUrl: result.imageUrl ?? null,
+        imagePath: result.imagePath ?? null,
+        previewUrl: result.previewUrl ?? null,
         needsReview: res.status === 422,
       });
     } catch {
@@ -69,13 +79,14 @@ export function FoodScanner({ onSelect, onManualEntry }: FoodScannerProps) {
     }
   }
 
-  function selectItem(item: FoodItem, imageUrl: string | null) {
+  function selectItem(item: FoodItem, imagePath: string | null, previewUrl: string | null) {
     onSelect({
       detectedItem: item.foodName,
       quantityLbs: estimateLbs(item),
       usdaCategory: toUsdaCategory(item.category),
       confidence: item.confidence,
-      imageUrl,
+      imagePath,
+      previewUrl,
     });
   }
 
@@ -137,7 +148,7 @@ export function FoodScanner({ onSelect, onManualEntry }: FoodScannerProps) {
           {state.result.items.slice(0, 3).map((item, i) => (
             <button
               key={i}
-              onClick={() => selectItem(item, state.imageUrl)}
+              onClick={() => selectItem(item, state.imagePath, state.previewUrl)}
               className="w-full text-left bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between gap-3 hover:border-green-600 transition-all"
             >
               <div>

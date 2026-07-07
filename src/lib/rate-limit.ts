@@ -1,0 +1,52 @@
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
+
+const DEV_MODE = !process.env.UPSTASH_REDIS_REST_URL;
+
+let _redis: Redis | null = null;
+function getRedis(): Redis {
+  if (!_redis) {
+    _redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
+  }
+  return _redis;
+}
+
+let _otpPhone: Ratelimit | null = null;
+let _otpIP: Ratelimit | null = null;
+let _authIP: Ratelimit | null = null;
+
+function getOtpPhoneLimit() {
+  if (!_otpPhone) _otpPhone = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(5, '1 h'), prefix: 'rl:otp:phone' });
+  return _otpPhone;
+}
+function getOtpIPLimit() {
+  if (!_otpIP) _otpIP = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(10, '1 h'), prefix: 'rl:otp:ip' });
+  return _otpIP;
+}
+function getAuthIPLimit() {
+  if (!_authIP) _authIP = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(5, '15 m'), prefix: 'rl:auth:ip' });
+  return _authIP;
+}
+
+export type RateLimitResult = { allowed: boolean; retryAfter?: number };
+
+export async function checkOtpPhoneLimit(phone: string): Promise<RateLimitResult> {
+  if (DEV_MODE) { console.log('[rate-limit DEV] OTP phone check skipped:', phone); return { allowed: true }; }
+  const { success, reset } = await getOtpPhoneLimit().limit(phone);
+  return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
+}
+
+export async function checkOtpIPLimit(ip: string): Promise<RateLimitResult> {
+  if (DEV_MODE) { console.log('[rate-limit DEV] OTP IP check skipped:', ip); return { allowed: true }; }
+  const { success, reset } = await getOtpIPLimit().limit(ip);
+  return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
+}
+
+export async function checkAuthIPLimit(ip: string): Promise<RateLimitResult> {
+  if (DEV_MODE) { console.log('[rate-limit DEV] Auth IP check skipped:', ip); return { allowed: true }; }
+  const { success, reset } = await getAuthIPLimit().limit(ip);
+  return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
+}

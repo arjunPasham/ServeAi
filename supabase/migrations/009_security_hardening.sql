@@ -306,9 +306,6 @@ REVOKE EXECUTE ON FUNCTION submit_feedback(UUID, UUID, TEXT, TEXT) FROM PUBLIC, 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_feedback_events_order
   ON feedback_events (order_id);
 
--- ─── FIX 8: storage bucket for listing + dispute photos ───────────────────────
--- The app uploads via the service client and reads via public URL; the bucket
--- was referenced in code but never provisioned.
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('listing-photos', 'listing-photos', TRUE)
-ON CONFLICT (id) DO NOTHING;
+-- ─── FIX 8: storage bucket ────────────────────────────────────────────────────
+-- Bucket provisioning lives in 009_storage.sql (private bucket per TRD SH-3);
+-- readers use short-lived signed URLs generated server-side.

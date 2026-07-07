@@ -1,8 +1,10 @@
-import { Inngest } from 'inngest';
+import { EventSchemas, Inngest } from 'inngest';
 
 export const inngest = new Inngest({
   id: 'foodlink',
   eventKey: process.env.INNGEST_EVENT_KEY,
+  // Bind the event schema so inngest.send() and createFunction() are type-checked.
+  schemas: new EventSchemas().fromRecord<FoodLinkEvents>(),
 });
 
 // Typed event definitions for type safety across functions

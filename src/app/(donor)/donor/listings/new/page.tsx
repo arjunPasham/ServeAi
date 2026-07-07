@@ -36,14 +36,19 @@ export default function NewListingPage() {
   const [category, setCategory] = useState('');
   const [handlingNotes, setHandlingNotes] = useState('');
   const [confidenceScore, setConfidenceScore] = useState(1.0);
+  // Stored on the listing: a storage key from the scan (bucket is private;
+  // readers get signed URLs) or the placeholder URL for manual entry.
   const [imageUrl, setImageUrl] = useState('https://placehold.co/400x300');
+  // Short-lived signed URL used only to preview the scanned photo in this form
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   function handleScanSelect(selection: ScanSelection) {
     setDetectedItem(selection.detectedItem);
     setQuantityLbs(String(selection.quantityLbs));
     setCategory(selection.usdaCategory);
     setConfidenceScore(selection.confidence);
-    if (selection.imageUrl) setImageUrl(selection.imageUrl);
+    if (selection.imagePath) setImageUrl(selection.imagePath);
+    setPreviewUrl(selection.previewUrl);
     setStep('details');
   }
 
@@ -166,10 +171,10 @@ export default function NewListingPage() {
 
         {step === 'details' && (
           <div className="space-y-4">
-            {imageUrl && !imageUrl.includes('placehold.co') && (
+            {previewUrl && (
               <div className="h-40 bg-gray-100 rounded-2xl overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={imageUrl} alt={detectedItem || 'Scanned food'} className="w-full h-full object-cover" />
+                <img src={previewUrl} alt={detectedItem || 'Scanned food'} className="w-full h-full object-cover" />
               </div>
             )}
             <div>

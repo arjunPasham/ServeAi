@@ -30,11 +30,19 @@ Smarty all have simulated dev modes:
 
 ## 3. Set up the database
 
-In the Supabase SQL editor, run in order:
+In the Supabase SQL editor, run **in filename order**:
 
-1. `supabase/migrations/001_extensions.sql` … `008_rpcs.sql`
-2. `supabase/migrations/009_security_hardening.sql` ← new (security fixes + storage bucket)
-3. `supabase/seed.sql` (USDA prices)
+1. `001_extensions.sql` … `008_rpcs.sql`
+2. `009_security_hardening.sql` (RPC hardening, role-escalation lock)
+3. `009_storage.sql` (private listing-photos bucket, SH-3)
+4. `010_feedback_guards.sql` (feedback ownership + dispute window)
+5. `011_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
+6. `seed.sql` (USDA prices)
+
+> Note: two files share the `009` prefix (`009_security_hardening.sql` and
+> `009_storage.sql`) — a harmless numbering collision from two parallel
+> branches. Run both; order between them doesn't matter. `011` reconciles the
+> overlap, so the final state is correct regardless.
 
 ## 4. Run
 

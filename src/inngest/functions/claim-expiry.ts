@@ -38,7 +38,10 @@ export const claimExpiry = inngest.createFunction(
         // Already canceled/succeeded — the webhook path handles those states
       }
 
-      await supabase.rpc('revert_listing_to_live', { p_listing_id: order.listing_id });
+      await supabase.rpc('revert_listing_to_live', {
+        p_listing_id: order.listing_id,
+        p_reason: 'payment_not_completed',
+      });
 
       await supabase
         .from('orders')

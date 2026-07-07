@@ -125,6 +125,15 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
   });
 
   if (error) {
+    // Cold-chain job hid the listing mid-delivery — food is past its safety
+    // window and must not be handed over. Surface a specific code so the UI
+    // can tell the courier what happened instead of a generic failure.
+    if (error.message?.includes('LISTING_NOT_IN_DISPATCHED_STATE')) {
+      return { success: false, error: 'LISTING_EXPIRED_DURING_DELIVERY' };
+    }
+    if (error.message?.includes('ORDER_NOT_FOUND_OR_INVALID_STATE')) {
+      return { success: false, error: 'ORDER_NOT_FOUND' };
+    }
     return { success: false, error: 'SERVER_ERROR' };
   }
 

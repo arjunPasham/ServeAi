@@ -1,6 +1,7 @@
 -- 002_schema.sql
 -- Core table definitions for FoodLink
 -- All 10 tables in dependency order (no forward FK references)
+-- Idempotent: safe to replay on an existing database (Supabase Preview CI requirement)
 
 -- ─── HELPER: auto-update updated_at ────────────────────────────────────────
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -14,7 +15,7 @@ $$ LANGUAGE plpgsql;
 -- ─── USERS ──────────────────────────────────────────────────────────────────
 -- Mirrors auth.users (managed by Supabase Auth). id = auth.uid().
 -- A trigger (below) auto-inserts this row when auth.users is created.
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id             UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email          TEXT UNIQUE NOT NULL,
   phone          TEXT UNIQUE,
@@ -24,6 +25,7 @@ CREATE TABLE users (
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+DROP TRIGGER IF EXISTS users_updated_at ON users;
 CREATE TRIGGER users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -40,6 +42,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_auth_user();
@@ -47,7 +50,7 @@ CREATE TRIGGER on_auth_user_created
 -- ─── USDA COMMODITY PRICES ──────────────────────────────────────────────────
 -- Manually maintained in MVP; reviewed every 4 weeks (PRD §7.2.1).
 -- Categories with updated_at > 60 days block listing creation.
-CREATE TABLE usda_commodity_prices (
+CREATE TABLE IF NOT EXISTS usda_commodity_prices (
   id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   category                TEXT NOT NULL UNIQUE,
   price_per_lb            NUMERIC(10,4) NOT NULL,
@@ -57,7 +60,7 @@ CREATE TABLE usda_commodity_prices (
 );
 
 -- ─── DONOR PROFILES ─────────────────────────────────────────────────────────
-CREATE TABLE donor_profiles (
+CREATE TABLE IF NOT EXISTS donor_profiles (
   user_id            UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   type               TEXT NOT NULL CHECK (type IN ('commercial','residential')),
   business_name      TEXT,
@@ -72,7 +75,7 @@ CREATE TABLE donor_profiles (
 );
 
 -- ─── CONSUMER PROFILES ──────────────────────────────────────────────────────
-CREATE TABLE consumer_profiles (
+CREATE TABLE IF NOT EXISTS consumer_profiles (
   user_id           UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   type              TEXT NOT NULL CHECK (type IN ('shelter','household')),
   organization_name TEXT,
@@ -84,7 +87,7 @@ CREATE TABLE consumer_profiles (
 );
 
 -- ─── COURIER PROFILES ───────────────────────────────────────────────────────
-CREATE TABLE courier_profiles (
+CREATE TABLE IF NOT EXISTS courier_profiles (
   user_id                     UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   is_available                BOOLEAN DEFAULT FALSE,
   current_lat                 FLOAT8,
@@ -107,6 +110,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS courier_location_sync ON courier_profiles;
 CREATE TRIGGER courier_location_sync
   BEFORE INSERT OR UPDATE OF current_lat, current_lng ON courier_profiles
   FOR EACH ROW EXECUTE FUNCTION sync_courier_location();
@@ -122,6 +126,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS donor_location_sync ON donor_profiles;
 CREATE TRIGGER donor_location_sync
   BEFORE INSERT OR UPDATE OF address_lat, address_lng ON donor_profiles
   FOR EACH ROW EXECUTE FUNCTION sync_donor_location();
@@ -137,12 +142,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS consumer_location_sync ON consumer_profiles;
 CREATE TRIGGER consumer_location_sync
   BEFORE INSERT OR UPDATE OF delivery_lat, delivery_lng ON consumer_profiles
   FOR EACH ROW EXECUTE FUNCTION sync_consumer_location();
 
 -- ─── LISTINGS ───────────────────────────────────────────────────────────────
-CREATE TABLE listings (
+CREATE TABLE IF NOT EXISTS listings (
   id                           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   donor_id                     UUID NOT NULL REFERENCES users(id),
   status                       TEXT NOT NULL DEFAULT 'draft'
@@ -179,7 +185,7 @@ CREATE TABLE listings (
 );
 
 -- ─── ORDERS ─────────────────────────────────────────────────────────────────
-CREATE TABLE orders (
+CREATE TABLE IF NOT EXISTS orders (
   id                        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   listing_id                UUID NOT NULL REFERENCES listings(id),
   consumer_id               UUID NOT NULL REFERENCES users(id),
@@ -198,7 +204,7 @@ CREATE TABLE orders (
 );
 
 -- ─── DISPATCH EVENTS ────────────────────────────────────────────────────────
-CREATE TABLE dispatch_events (
+CREATE TABLE IF NOT EXISTS dispatch_events (
   id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   order_id     UUID NOT NULL REFERENCES orders(id),
   courier_id   UUID NOT NULL REFERENCES users(id),
@@ -209,7 +215,7 @@ CREATE TABLE dispatch_events (
 
 -- ─── FEEDBACK EVENTS ────────────────────────────────────────────────────────
 -- FIX: photo_url added per TRD fix — required when outcome = 'issue_reported' (PRD §8.3)
-CREATE TABLE feedback_events (
+CREATE TABLE IF NOT EXISTS feedback_events (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   order_id    UUID NOT NULL REFERENCES orders(id),
   consumer_id UUID NOT NULL REFERENCES users(id),
@@ -221,7 +227,7 @@ CREATE TABLE feedback_events (
 -- ─── AUDIT LOG ──────────────────────────────────────────────────────────────
 -- Append-only. UPDATE and DELETE revoked in 005_audit.sql.
 -- Every status transition must write here atomically via PostgreSQL RPCs.
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
   id          BIGSERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL,
   entity_id   UUID NOT NULL,

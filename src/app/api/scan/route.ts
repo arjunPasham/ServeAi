@@ -77,8 +77,12 @@ export async function POST(req: Request): Promise<Response> {
   const result = await scanFoodImage(imageBase64, image.type);
 
   // Persist the photo so the listing shows the real food, not a placeholder.
-  // Server-generated path — the client never controls storage keys.
-  let imageUrl: string | null = null;
+  // Server-generated path — the client never controls storage keys. The bucket
+  // is PRIVATE (009_storage.sql / SH-3): the storage key goes into the listing
+  // record and readers get short-lived signed URLs; previewUrl is only for the
+  // immediate scan UI.
+  let imagePath: string | null = null;
+  let previewUrl: string | null = null;
   try {
     const service = await createServiceClient();
     const path = `scans/${user.id}/${randomUUID()}.${EXT_BY_TYPE[image.type] ?? 'jpg'}`;
@@ -86,8 +90,11 @@ export async function POST(req: Request): Promise<Response> {
       .from('listing-photos')
       .upload(path, buffer, { contentType: image.type });
     if (!uploadError) {
-      const { data } = service.storage.from('listing-photos').getPublicUrl(path);
-      imageUrl = data.publicUrl;
+      imagePath = path;
+      const { data } = await service.storage
+        .from('listing-photos')
+        .createSignedUrl(path, 3600);
+      previewUrl = data?.signedUrl ?? null;
     }
   } catch {
     // Non-fatal: scan results are still useful without a hosted image
@@ -95,7 +102,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // 422 signals "we have a result but it should not be auto-trusted".
   return Response.json(
-    { ...result, imageUrl },
+    { ...result, imagePath, previewUrl },
     { status: result.needsManualReview ? 422 : 200 },
   );
 }
