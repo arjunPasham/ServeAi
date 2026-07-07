@@ -1,22 +1,36 @@
 import crypto from 'crypto';
 
-const N8N_BASE_URL = process.env.N8N_WEBHOOK_BASE_URL ?? 'https://arjunpasham.app.n8n.cloud/webhook';
+// DEV BYPASS: when N8N_WEBHOOK_BASE_URL is not set, webhooks are logged instead
+// of sent. Never default to a hardcoded third-party URL — that ships user data
+// (addresses, order details) to an instance the operator doesn't control.
+const N8N_BASE_URL = process.env.N8N_WEBHOOK_BASE_URL;
 const WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET ?? '';
 
 function sign(body: string): string {
   return 'sha256=' + crypto.createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex');
 }
 
+// Fire-and-forget: an n8n outage must never fail the business operation that
+// already committed (e.g. a published listing or confirmed delivery).
 async function send(path: string, payload: unknown): Promise<void> {
+  if (!N8N_BASE_URL) {
+    console.log(`[DEV] n8n webhook skipped (${path}):`, JSON.stringify(payload));
+    return;
+  }
+
   const body = JSON.stringify(payload);
-  await fetch(`${N8N_BASE_URL}/${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-n8n-signature': sign(body),
-    },
-    body,
-  });
+  try {
+    await fetch(`${N8N_BASE_URL}/${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-n8n-signature': sign(body),
+      },
+      body,
+    });
+  } catch (err) {
+    console.error(`n8n webhook failed (${path}):`, err instanceof Error ? err.message : err);
+  }
 }
 
 // Call after listings.status is set to 'live' in Supabase

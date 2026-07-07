@@ -1,30 +1,61 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { getCourierActiveOrder, setCourierAvailability, updateCourierLocation, confirmDelivery } from '@/actions/dispatch';
+import { getCourierActiveOrder, getCourierStatus, getPendingOffers, setCourierAvailability, updateCourierLocation, confirmDelivery } from '@/actions/dispatch';
 import { DeliveryConfirm } from '@/components/dispatch/DeliveryConfirm';
+import Link from 'next/link';
 
 type ActiveOrder = Awaited<ReturnType<typeof getCourierActiveOrder>>;
+type PendingOffer = Awaited<ReturnType<typeof getPendingOffers>>[number];
 
 export default function CourierDashboardPage() {
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | undefined>(undefined);
+  const [offers, setOffers] = useState<PendingOffer[]>([]);
   const [available, setAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    getCourierActiveOrder().then(order => {
+    async function refresh() {
+      const [order, pending] = await Promise.all([
+        getCourierActiveOrder(),
+        getPendingOffers(),
+      ]);
       setActiveOrder(order ?? undefined);
+      setOffers(pending);
       setLoading(false);
+    }
+    refresh();
+
+    // Poll for new dispatch offers / order changes (push is console-only in dev)
+    const interval = setInterval(refresh, 10000);
+
+    // Reflect the courier's real availability (persisted server-side), and
+    // request geolocation. In dev mode (synthetic donor coords), fall back to
+    // a default location when GPS is denied so dispatch still finds couriers.
+    let watchId: number | undefined;
+    getCourierStatus().then(status => {
+      if (status) setAvailable(status.isAvailable);
+      const devFallback = status?.devLocationFallback ?? false;
+
+      if (navigator.geolocation) {
+        watchId = navigator.geolocation.watchPosition(
+          pos => {
+            updateCourierLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          () => {
+            if (devFallback) updateCourierLocation(42.3314, -83.0458);
+          }
+        );
+      } else if (devFallback) {
+        updateCourierLocation(42.3314, -83.0458);
+      }
     });
 
-    // Request geolocation and keep sending updates
-    if (navigator.geolocation) {
-      const watchId = navigator.geolocation.watchPosition(pos => {
-        updateCourierLocation(pos.coords.latitude, pos.coords.longitude);
-      });
-      return () => navigator.geolocation.clearWatch(watchId);
-    }
+    return () => {
+      clearInterval(interval);
+      if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+    };
   }, []);
 
   function toggleAvailability() {
@@ -82,6 +113,27 @@ export default function CourierDashboardPage() {
             />
           </button>
         </div>
+
+        {/* Incoming dispatch offers */}
+        {!activeOrder && offers.length > 0 && (
+          <div className="space-y-2">
+            {offers.map(offer => (
+              <Link
+                key={offer.id}
+                href={`/courier/dispatch/${offer.order_id}`}
+                className="block bg-green-50 border border-green-300 rounded-2xl px-4 py-4 hover:border-green-500 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-sm text-green-900">New delivery offer 🚲</p>
+                    <p className="text-xs text-green-700">Tap to view pickup details and accept</p>
+                  </div>
+                  <span className="text-green-700 text-lg">→</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
 
         {/* Active delivery */}
         {loading ? (

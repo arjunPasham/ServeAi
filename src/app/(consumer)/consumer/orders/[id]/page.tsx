@@ -63,10 +63,18 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
     return () => clearInterval(interval);
   }, [id]);
 
+  // Keys match the submit_feedback error codes mapped in actions/feedback.ts
+  const FEEDBACK_ERROR_LABEL: Record<string, string> = {
+    DISPUTE_WINDOW_EXPIRED: 'The 2-hour reporting window for this order has closed.',
+    FEEDBACK_ALREADY_SUBMITTED: 'Feedback was already submitted for this order.',
+    ORDER_NOT_FOUND_OR_NOT_DELIVERED: 'This order is not eligible for feedback yet.',
+  };
+
   function handlePositiveFeedback() {
     startTransition(async () => {
       const result = await submitPositiveFeedback(id);
       if (result.success) setFeedbackSent(true);
+      else setError(FEEDBACK_ERROR_LABEL[result.error] ?? 'Could not submit feedback. Please try again.');
     });
   }
 
@@ -87,7 +95,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
         await fetch(urlData.signedUrl, { method: 'PUT', body: file });
         const result = await submitIssueFeedback(id, urlData.path);
         if (result.success) setFeedbackSent(true);
-        else setError('Failed to submit issue report');
+        else setError(FEEDBACK_ERROR_LABEL[result.error] ?? 'Failed to submit issue report');
       } finally {
         setUploadingPhoto(false);
       }

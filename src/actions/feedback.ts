@@ -1,16 +1,20 @@
 'use server';
 
+import { randomUUID } from 'crypto';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 export type FeedbackResult =
   | { success: true }
   | { success: false; error: string };
 
-// Map submit_feedback RPC exceptions (010_feedback_guards.sql) to stable codes
+// Map submit_feedback RPC exceptions (011_merge_reconciliation.sql — the
+// consolidated version of 009/010) to stable client codes
 function mapFeedbackError(message: string | undefined): string {
-  if (message?.includes('DISPUTE_WINDOW_EXPIRED')) return 'DISPUTE_WINDOW_EXPIRED';
-  if (message?.includes('ORDER_NOT_FOUND_OR_NOT_DELIVERED')) return 'ORDER_NOT_FOUND_OR_NOT_DELIVERED';
-  if (message?.includes('PHOTO_REQUIRED')) return 'PHOTO_REQUIRED';
+  if (!message) return 'SERVER_ERROR';
+  if (message.includes('DISPUTE_WINDOW_EXPIRED')) return 'DISPUTE_WINDOW_EXPIRED';
+  if (message.includes('FEEDBACK_ALREADY_SUBMITTED')) return 'FEEDBACK_ALREADY_SUBMITTED';
+  if (message.includes('ORDER_NOT_FOUND_OR_NOT_DELIVERED')) return 'ORDER_NOT_FOUND_OR_NOT_DELIVERED';
+  if (message.includes('PHOTO_REQUIRED')) return 'PHOTO_REQUIRED';
   return 'SERVER_ERROR';
 }
 
@@ -63,16 +67,18 @@ export async function getSignedUploadUrl(
 
   const service = await createServiceClient();
 
-  // Only the consumer who placed the order may upload into its dispute-photos path
+  // Only the consumer who placed the order may upload dispute evidence for it
   const { data: order } = await service
     .from('orders')
     .select('id')
     .eq('id', orderId)
     .eq('consumer_id', user.id)
-    .single();
+    .maybeSingle();
   if (!order) return null;
 
-  const path = `dispute-photos/${orderId}/${filename}`;
+  // Server-generated key: never trust a client filename in a storage path
+  const ext = filename.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+  const path = `dispute-photos/${orderId}/${randomUUID()}.${ext}`;
 
   const { data } = await service.storage
     .from('listing-photos')

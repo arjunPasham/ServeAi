@@ -76,20 +76,35 @@ export async function createDraftListing(params: {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
 
+  if (params.estimatedQuantityLbs <= 0) {
+    return { success: false, error: 'INVALID_QUANTITY' };
+  }
+
   const service = await createServiceClient();
 
-  // Fetch commodity price to compute base_commodity_price_cents
+  // Recompute ALL pricing server-side — never trust client-submitted amounts.
+  // The client's slider value is only an input; the ±25% band and 30% discount
+  // floor are enforced here by clamping/blocking (PRD §7.2).
   const { data: commodity } = await service
     .from('usda_commodity_prices')
-    .select('price_per_lb')
+    .select('price_per_lb, retail_benchmark_per_lb, updated_at')
     .eq('category', params.usdaCategory)
     .single();
 
   if (!commodity) return { success: false, error: 'USDA_CATEGORY_NOT_FOUND' };
 
-  const baseCommodityPriceCents = Math.round(
-    Number(commodity.price_per_lb) * params.estimatedQuantityLbs * 100
+  const pricing = computePricing(
+    {
+      pricePerLb: Number(commodity.price_per_lb),
+      retailBenchmarkPerLb: Number(commodity.retail_benchmark_per_lb),
+      quantityLbs: params.estimatedQuantityLbs,
+      updatedAt: commodity.updated_at,
+    },
+    params.donorPayoutCents // clamped into [sliderMin, sliderMax] by computePricing
   );
+
+  if (pricing.staleData) return { success: false, error: 'USDA_DATA_STALE' };
+  if (pricing.discountFloorViolated) return { success: false, error: 'DISCOUNT_FLOOR_VIOLATED' };
 
   const temperatureSensitive = isTemperatureSensitive(params.usdaCategory);
 
@@ -101,12 +116,12 @@ export async function createDraftListing(params: {
     p_temperature_sensitive: temperatureSensitive,
     p_usda_category: params.usdaCategory,
     p_image_url: params.imageUrl,
-    p_base_commodity_price_cents: baseCommodityPriceCents,
-    p_suggested_donor_payout_cents: params.donorPayoutCents,
-    p_donor_payout_cents: params.donorPayoutCents,
-    p_consumer_price_cents: params.consumerPriceCents,
-    p_platform_fee_cents: params.platformFeeCents,
-    p_courier_fee_cents: params.courierFeeCents,
+    p_base_commodity_price_cents: pricing.baseCommodityPriceCents,
+    p_suggested_donor_payout_cents: pricing.suggestedDonorPayoutCents,
+    p_donor_payout_cents: pricing.donorPayoutCents,
+    p_consumer_price_cents: pricing.consumerPriceCents,
+    p_platform_fee_cents: pricing.platformFeeCents,
+    p_courier_fee_cents: pricing.courierFeeCents,
     p_handling_notes: params.handlingNotes ?? null,
   });
 
@@ -150,6 +165,13 @@ export async function publishListing(params: {
   let safetyExpiresAt: string | null = null;
   if (listing.temperature_sensitive && params.preparedAt) {
     const preparedDate = new Date(params.preparedAt);
+    if (Number.isNaN(preparedDate.getTime())) {
+      return { success: false, error: 'INVALID_PREPARED_AT' };
+    }
+    // Reject future timestamps (client max= is advisory only); 5 min clock skew allowed
+    if (preparedDate.getTime() > Date.now() + 5 * 60 * 1000) {
+      return { success: false, error: 'PREPARED_AT_IN_FUTURE' };
+    }
     const windowMs = HOT_FOOD_CATEGORIES.has(listing.usda_category ?? '')
       ? SAFETY_WINDOW_HOT_MS
       : SAFETY_WINDOW_COLD_MS;
@@ -220,25 +242,39 @@ export async function getDonorListings() {
   return data ?? [];
 }
 
-// Consumer browse: latest live listings.
-// NOTE: not yet location-filtered — geo-radius browse is a pending feature
-// (needs a PostGIS RPC like get_nearest_couriers).
+// Consumer browse: live listings with donor origin type (never the address).
+// NOTE: donor_profiles cannot be embedded via PostgREST here — listings and
+// donor_profiles are only related through users (no direct FK) — so the origin
+// type is merged in with a second query. Not yet location-filtered — geo-radius
+// browse is a pending feature (needs a PostGIS RPC like get_nearest_couriers).
 export async function getLiveListings() {
   const service = await createServiceClient();
 
-  const { data } = await service
+  const { data: listings } = await service
     .from('listings')
     .select(`
-      id, detected_item, estimated_quantity_lbs,
+      id, donor_id, detected_item, estimated_quantity_lbs,
       consumer_price_cents, temperature_sensitive,
-      image_url, published_at, safety_expires_at,
-      donor_profiles!inner(type)
+      image_url, published_at, safety_expires_at
     `)
     .eq('status', 'live')
     .order('published_at', { ascending: false })
     .limit(50);
 
-  return data ?? [];
+  if (!listings?.length) return [];
+
+  const donorIds = [...new Set(listings.map(l => l.donor_id as string))];
+  const { data: profiles } = await service
+    .from('donor_profiles')
+    .select('user_id, type')
+    .in('user_id', donorIds);
+
+  const typeByDonor = new Map((profiles ?? []).map(p => [p.user_id as string, p.type as string]));
+
+  return listings.map(l => ({
+    ...l,
+    donor_type: typeByDonor.get(l.donor_id as string) ?? 'commercial',
+  }));
 }
 
 export async function getListingSignedUploadUrl(
@@ -291,8 +327,43 @@ export async function getLiveListingsWithSignedUrls(): Promise<
   );
 }
 
+// Sign a listing image for a caller who is party to it. This action previously
+// had NO auth or scope check — any caller could mint signed URLs for every key
+// in the private bucket, including dispute evidence, defeating the point of
+// making the bucket private (SH-3).
 export async function getSignedImageUrl(path: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Dispute evidence is never signed through this action (admin/ops only)
+  if (path.startsWith('dispute-photos/')) return null;
+
   const service = await createServiceClient();
+
+  // The path must be the image of a listing the caller is party to:
+  // the donor who owns it, anyone while it's live on the marketplace,
+  // or the consumer/courier attached to its order.
+  const { data: listing } = await service
+    .from('listings')
+    .select('id, donor_id, status')
+    .eq('image_url', path)
+    .maybeSingle();
+  if (!listing) return null;
+
+  let allowed = listing.donor_id === user.id || listing.status === 'live';
+  if (!allowed) {
+    const { data: order } = await service
+      .from('orders')
+      .select('id')
+      .eq('listing_id', listing.id)
+      .or(`consumer_id.eq.${user.id},courier_id.eq.${user.id}`)
+      .limit(1)
+      .maybeSingle();
+    allowed = Boolean(order);
+  }
+  if (!allowed) return null;
+
   const { data } = await service.storage
     .from('listing-photos')
     .createSignedUrl(path, 3600);

@@ -151,20 +151,94 @@ export default function RegisterPage() {
             )}
 
             {role === 'donor' && (
-              <div>
-                <label htmlFor="businessName" className="block text-sm font-medium text-foreground mb-1.5">
-                  Business name <span className="text-destructive">*</span>
-                </label>
+              <>
+                <div>
+                  <label htmlFor="businessName" className="block text-sm font-medium text-foreground mb-1.5">
+                    Business name
+                  </label>
+                  <input
+                    id="businessName"
+                    name="businessName"
+                    type="text"
+                    autoComplete="organization"
+                    placeholder="Restaurant or business name"
+                    className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1.5">Leave blank if you&apos;re donating as a household.</p>
+                </div>
+                <div>
+                  <label htmlFor="licenseNumber" className="block text-sm font-medium text-foreground mb-1.5">
+                    Food service permit / license #
+                  </label>
+                  <input
+                    id="licenseNumber"
+                    name="licenseNumber"
+                    type="text"
+                    placeholder="Required for businesses"
+                    className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="address" className="block text-sm font-medium text-foreground mb-1.5">
+                    Pickup address <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    id="address"
+                    name="address"
+                    type="text"
+                    required
+                    autoComplete="street-address"
+                    placeholder="Street, city, state, ZIP"
+                    className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1.5">Only shared with your assigned courier — never shown publicly.</p>
+                </div>
+              </>
+            )}
+
+            {role === 'consumer' && (
+              <>
+                <div>
+                  <label htmlFor="organizationName" className="block text-sm font-medium text-foreground mb-1.5">
+                    Organization name (optional)
+                  </label>
+                  <input
+                    id="organizationName"
+                    name="organizationName"
+                    type="text"
+                    autoComplete="organization"
+                    placeholder="Shelter or food bank name — leave blank for household"
+                    className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="address" className="block text-sm font-medium text-foreground mb-1.5">
+                    Delivery address <span className="text-destructive">*</span>
+                  </label>
+                  <input
+                    id="address"
+                    name="address"
+                    type="text"
+                    required
+                    autoComplete="street-address"
+                    placeholder="Street, city, state, ZIP"
+                    className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  />
+                </div>
+              </>
+            )}
+
+            {role === 'courier' && (
+              <label className="flex items-start gap-3 cursor-pointer bg-muted/50 border border-border rounded-xl px-4 py-3">
                 <input
-                  id="businessName"
-                  name="businessName"
-                  type="text"
-                  required
-                  autoComplete="organization"
-                  placeholder="Restaurant or business name"
-                  className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
+                  name="insulated"
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-ring"
                 />
-              </div>
+                <span className="text-sm text-foreground">
+                  I have an insulated bag or cooler for temperature-sensitive deliveries
+                </span>
+              </label>
             )}
 
             <div>
@@ -220,10 +294,10 @@ export default function RegisterPage() {
                 required
                 autoComplete="tel"
                 inputMode="tel"
-                placeholder="+1 (555) 000-0000"
+                placeholder="(555) 000-0000"
                 className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
               />
-              <p className="text-xs text-muted-foreground mt-1.5">We&apos;ll send a verification code to this number.</p>
+              <p className="text-xs text-muted-foreground mt-1.5">US numbers only — any format works. We&apos;ll send a verification code.</p>
             </div>
 
             {error && (

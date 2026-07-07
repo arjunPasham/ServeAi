@@ -39,6 +39,10 @@ coverage/
 /playwright-report/
 /playwright/.cache/
 
+# ─── Food-scan test inputs (keep the folder, ignore the photos) ──────────────
+/test-images/*
+!/test-images/.gitkeep
+
 # ─── Cache & Temp ────────────────────────────────────────────────────────────
 .cache/
 .turbo/

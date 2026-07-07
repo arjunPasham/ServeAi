@@ -1,142 +1,142 @@
 import { inngest } from '../client';
 import { createServiceClient } from '@/lib/supabase/server';
 import { sendDispatchNotification, sendConsumerRefundNotification } from '@/lib/onesignal';
-import { stripe } from '@/lib/stripe';
+import { refundOrderPayment } from '@/lib/stripe';
 
-// Maximum dispatch attempts before we give up and refund the consumer
-const MAX_DISPATCH_ATTEMPTS = 4; // 4 × 5-min windows = 20 minutes
+// 4 sequential offers × 5-minute acceptance windows ≈ the PRD's 20-minute cap
+// (PRD §7.4). Declines short-circuit the window via the dispatch/responded event.
+const MAX_OFFERS = 4;
+
+// Without Smarty configured, donor addresses get synthetic Detroit-area coords
+// while couriers report real GPS — a 10km radius would never match. Dev mode
+// uses a planet-scale radius so the demo loop completes anywhere.
+const DISPATCH_RADIUS_METERS = process.env.SMARTY_AUTH_ID ? 10000 : 20000000;
+
+interface NearestCourier {
+  user_id: string;
+  distance_meters: number;
+  current_lat: number;
+  current_lng: number;
+}
 
 export const courierDispatch = inngest.createFunction(
   { id: 'courier-dispatch', retries: 3 },
   { event: 'dispatch/initiated' },
   async ({ event, step }) => {
-    let attempts = 0;
-
-    while (attempts < MAX_DISPATCH_ATTEMPTS) {
-      attempts++;
-
-      // Fetch nearest available couriers
-      const couriers = await step.run(`fetch-couriers-${attempts}`, async () => {
+    for (let offer = 1; offer <= MAX_OFFERS; offer++) {
+      // Nearest eligible courier who hasn't already been offered this order
+      const courier = await step.run(`find-courier-${offer}`, async () => {
         const supabase = await createServiceClient();
+
+        const { data: prior } = await supabase
+          .from('dispatch_events')
+          .select('courier_id')
+          .eq('order_id', event.data.order_id);
+        const alreadyOffered = new Set((prior ?? []).map(d => d.courier_id as string));
+
         const { data } = await supabase.rpc('get_nearest_couriers', {
           p_donor_lat: event.data.donor_lat,
           p_donor_lng: event.data.donor_lng,
           p_requires_cold_chain: event.data.requires_cold_chain,
-          p_radius_meters: 10000,
-          p_limit: 5,
+          p_radius_meters: DISPATCH_RADIUS_METERS,
+          p_limit: 10,
         });
-        return data ?? [];
+
+        const candidates = (data ?? []) as NearestCourier[];
+        return candidates.find(c => !alreadyOffered.has(c.user_id)) ?? null;
       });
 
-      if (!couriers.length) {
-        await step.sleep(`no-couriers-backoff-${attempts}`, '5m');
+      if (!courier) {
+        // Nobody in range right now — wait out this window and retry
+        await step.sleep(`no-couriers-backoff-${offer}`, '5m');
         continue;
       }
 
-      // Offer to each courier sequentially until one accepts
-      let accepted = false;
-      for (const courier of couriers) {
-        const dispatchEvent = await step.run(`create-dispatch-event-${attempts}-${courier.user_id}`, async () => {
+      const dispatchEvent = await step.run(`create-dispatch-event-${offer}`, async () => {
+        const supabase = await createServiceClient();
+        const { data } = await supabase
+          .from('dispatch_events')
+          .insert({
+            order_id: event.data.order_id,
+            courier_id: courier.user_id,
+          })
+          .select()
+          .single();
+        return data;
+      });
+
+      if (!dispatchEvent) continue;
+
+      await step.run(`notify-courier-${offer}`, async () => {
+        await sendDispatchNotification(courier.user_id, event.data.order_id);
+      });
+
+      // Wait up to 5 minutes; accept/decline actions emit dispatch/responded,
+      // so a decline moves to the next courier immediately.
+      const response = await step.waitForEvent(`wait-response-${offer}`, {
+        event: 'dispatch/responded',
+        timeout: '5m',
+        if: `async.data.dispatch_event_id == "${dispatchEvent.id}"`,
+      });
+
+      if (response?.data?.response === 'accepted') {
+        return { accepted: true, offers: offer };
+      }
+
+      if (!response) {
+        // No reply within the window — mark timeout so the courier's stale
+        // offer page shows "no longer available"
+        await step.run(`timeout-dispatch-${offer}`, async () => {
           const supabase = await createServiceClient();
-          const { data } = await supabase
+          await supabase
             .from('dispatch_events')
-            .insert({
-              order_id: event.data.order_id,
-              courier_id: courier.user_id,
-            })
-            .select()
-            .single();
-          return data;
-        });
-
-        if (!dispatchEvent) continue;
-
-        // Notify courier
-        await step.run(`notify-courier-${courier.user_id}`, async () => {
-          await sendDispatchNotification(courier.user_id, event.data.order_id);
-        });
-
-        // Wait 5 minutes for courier response
-        await step.sleep(`wait-courier-response-${dispatchEvent.id}`, '5m');
-
-        // Check if courier accepted
-        const response = await step.run(`check-response-${dispatchEvent.id}`, async () => {
-          const supabase = await createServiceClient();
-          const { data } = await supabase
-            .from('dispatch_events')
-            .select('response')
+            .update({ responded_at: new Date().toISOString(), response: 'timeout' })
             .eq('id', dispatchEvent.id)
-            .single();
-          return data?.response;
+            .is('response', null);
         });
-
-        if (response === 'accepted') {
-          accepted = true;
-          break;
-        }
-
-        // Mark as timeout if no response
-        if (!response) {
-          await step.run(`timeout-dispatch-${dispatchEvent.id}`, async () => {
-            const supabase = await createServiceClient();
-            await supabase
-              .from('dispatch_events')
-              .update({ responded_at: new Date().toISOString(), response: 'timeout' })
-              .eq('id', dispatchEvent.id);
-          });
-        }
       }
-
-      if (accepted) {
-        return { accepted: true, attempts };
-      }
+      // declined → loop to next-nearest courier immediately
     }
 
-    // No courier accepted after all attempts — refund consumer
+    // No courier accepted within ~20 minutes — refund the consumer (PRD §8.2)
     await step.run('refund-consumer', async () => {
       const supabase = await createServiceClient();
 
-      // Get order and listing info for refund
       const { data: order } = await supabase
         .from('orders')
-        .select('stripe_payment_intent_id, consumer_id, listing_id')
+        .select('id, status, stripe_payment_intent_id, consumer_id, listing_id')
         .eq('id', event.data.order_id)
         .single();
 
-      if (!order) return;
+      // Already progressed (accepted late) or already refunded — do nothing
+      if (!order || order.status !== 'pending_dispatch') return;
 
-      // Refund via Stripe
-      const paymentIntent = await stripe.paymentIntents.retrieve(order.stripe_payment_intent_id);
-      if (paymentIntent.status === 'succeeded' && paymentIntent.latest_charge) {
-        await stripe.refunds.create({
-          charge: paymentIntent.latest_charge as string,
-          reason: 'requested_by_customer', // no courier available — not a fraud signal
-          metadata: { order_id: event.data.order_id, reason: 'no_courier_available' },
-        });
-      }
+      await refundOrderPayment({
+        paymentIntentId: order.stripe_payment_intent_id,
+        orderId: order.id,
+        reason: 'no_courier_available',
+      });
 
-      // Revert listing to live
       await supabase.rpc('revert_listing_to_live', {
         p_listing_id: order.listing_id,
         p_reason: 'no_courier_available',
       });
 
-      // Update order status
       await supabase
         .from('orders')
         .update({ status: 'refunded' })
-        .eq('id', event.data.order_id);
+        .eq('id', order.id)
+        .eq('status', 'pending_dispatch');
 
       await supabase.from('audit_log').insert({
         entity_type: 'order',
-        entity_id: event.data.order_id,
+        entity_id: order.id,
         event_type: 'refunded',
         actor_id: null,
         actor_role: 'system',
-        payload: { reason: 'no_courier_available', attempts: MAX_DISPATCH_ATTEMPTS },
+        payload: { reason: 'no_courier_available', offers: MAX_OFFERS },
       });
 
-      // Notify consumer
       await sendConsumerRefundNotification(order.consumer_id, event.data.detected_item);
     });
 

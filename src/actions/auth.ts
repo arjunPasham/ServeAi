@@ -5,15 +5,29 @@ import { headers } from 'next/headers';
 import { z } from 'zod';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { sendOTP, verifyOTP } from '@/lib/twilio';
+import { validateUSAddress } from '@/lib/smarty';
 import { checkAuthIPLimit } from '@/lib/rate-limit';
 
-const PhoneSchema = z.string().regex(/^\+1\d{10}$/, 'Phone must be in E.164 format (+1XXXXXXXXXX)');
+// Accept anything a human types ("(555) 123-4567", "555-123-4567", "+1 555…")
+// and normalize to E.164 (+1XXXXXXXXXX). Returns null if not a US number.
+function normalizePhone(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return null;
+}
 
 const RegisterSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   role: z.enum(['donor', 'consumer', 'courier']),
-  phone: PhoneSchema,
+  phone: z.string().min(10),
+  address: z.string().optional(),
+  businessName: z.string().optional(),
+  licenseNumber: z.string().optional(),
+  organizationName: z.string().optional(),
+  fullName: z.string().optional(),
+  insulated: z.boolean().optional(),
 });
 
 const LoginSchema = z.object({
@@ -36,12 +50,23 @@ const ROLE_DASHBOARD: Record<string, string> = {
   admin: '/admin/dashboard',
 };
 
+// MVP default: consumers accept deliveries any day, 8am–8pm. Editable in Phase 2.
+const DEFAULT_RECEIVING_WINDOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(
+  day => ({ day, start: '08:00', end: '20:00' })
+);
+
 export async function registerAction(formData: FormData): Promise<AuthResult> {
   const raw = {
     email: formData.get('email'),
     password: formData.get('password'),
     role: formData.get('role'),
     phone: formData.get('phone'),
+    address: formData.get('address') ?? undefined,
+    businessName: formData.get('businessName') ?? undefined,
+    licenseNumber: formData.get('licenseNumber') ?? undefined,
+    organizationName: formData.get('organizationName') ?? undefined,
+    fullName: formData.get('fullName') ?? undefined,
+    insulated: formData.get('insulated') === 'on',
   };
 
   const parsed = RegisterSchema.safeParse(raw);
@@ -49,23 +74,123 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
     return { success: false, error: parsed.error.errors[0].message };
   }
 
-  const { email, password, role, phone } = parsed.data;
-  const supabase = await createClient();
+  const { email, password, role } = parsed.data;
 
-  const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error || !data.user) {
-    return { success: false, error: error?.message ?? 'SIGNUP_FAILED' };
+  const phone = normalizePhone(parsed.data.phone);
+  if (!phone) {
+    return { success: false, error: 'Please enter a valid US phone number (10 digits).' };
+  }
+
+  // Donors and consumers need a physical address for pickup/delivery
+  const address = parsed.data.address?.trim() ?? '';
+  if ((role === 'donor' || role === 'consumer') && !address) {
+    return { success: false, error: 'Address is required for this account type.' };
+  }
+
+  const service = await createServiceClient();
+
+  // Pre-check phone uniqueness so we fail before creating an auth user
+  const { data: phoneTaken } = await service
+    .from('users')
+    .select('id')
+    .eq('phone', phone)
+    .maybeSingle();
+  if (phoneTaken) {
+    return { success: false, error: 'This phone number is already registered.' };
+  }
+
+  // Validate + geocode the address before creating anything
+  let validatedAddress: Awaited<ReturnType<typeof validateUSAddress>> | null = null;
+  if (role === 'donor' || role === 'consumer') {
+    validatedAddress = await validateUSAddress(address);
+    if (!validatedAddress.valid) {
+      return { success: false, error: 'We could not verify that address. Please check it and try again.' };
+    }
+  }
+
+  // Create the auth user via the admin API with email pre-confirmed.
+  // This guarantees registration works regardless of the Supabase project's
+  // email-confirmation setting; phone OTP is our verification gate.
+  const { data: created, error: createError } = await service.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  if (createError || !created.user) {
+    const msg = createError?.message ?? 'SIGNUP_FAILED';
+    return {
+      success: false,
+      error: msg.toLowerCase().includes('already') ? 'An account with this email already exists.' : msg,
+    };
+  }
+  const userId = created.user.id;
+
+  // Best-effort cleanup so a failed registration doesn't orphan the email
+  async function rollback() {
+    try { await service.auth.admin.deleteUser(userId); } catch {}
   }
 
   // Update the auto-created public.users row (handle_new_auth_user trigger sets role='consumer')
-  const service = await createServiceClient();
   const { error: updateError } = await service
     .from('users')
     .update({ role, phone })
-    .eq('id', data.user.id);
-
+    .eq('id', userId);
   if (updateError) {
+    await rollback();
     return { success: false, error: 'PROFILE_UPDATE_FAILED' };
+  }
+
+  // Role + phone_verified live in app_metadata: users cannot modify app_metadata,
+  // so the middleware can trust it (user_metadata is user-writable — never use it for auth).
+  await service.auth.admin.updateUserById(userId, {
+    app_metadata: { role, phone_verified: false },
+  });
+
+  // Create the role profile row — without this, listings/dispatch/delivery all break
+  let profileError: string | null = null;
+  if (role === 'donor') {
+    const businessName = parsed.data.businessName?.trim() || null;
+    const { error } = await service.from('donor_profiles').insert({
+      user_id: userId,
+      type: businessName ? 'commercial' : 'residential',
+      business_name: businessName,
+      license_number: parsed.data.licenseNumber?.trim() || null,
+      address: validatedAddress?.standardized?.deliveryLine ?? address,
+      address_lat: validatedAddress?.lat ?? null,
+      address_lng: validatedAddress?.lng ?? null,
+    });
+    if (error) profileError = error.message;
+  } else if (role === 'consumer') {
+    const organizationName = parsed.data.organizationName?.trim() || null;
+    const { error } = await service.from('consumer_profiles').insert({
+      user_id: userId,
+      type: organizationName ? 'shelter' : 'household',
+      organization_name: organizationName,
+      delivery_address: validatedAddress?.standardized?.deliveryLine ?? address,
+      delivery_lat: validatedAddress?.lat ?? null,
+      delivery_lng: validatedAddress?.lng ?? null,
+      receiving_window: DEFAULT_RECEIVING_WINDOW,
+    });
+    if (error) profileError = error.message;
+  } else if (role === 'courier') {
+    const { error } = await service.from('courier_profiles').insert({
+      user_id: userId,
+      is_available: false,
+      insulated_transport_capable: parsed.data.insulated ?? false,
+    });
+    if (error) profileError = error.message;
+  }
+
+  if (profileError) {
+    await rollback();
+    return { success: false, error: 'Could not create your profile. Please try again.' };
+  }
+
+  // Establish the browser session (admin.createUser does not sign the user in)
+  const supabase = await createClient();
+  const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+  if (signInError) {
+    return { success: false, error: 'Account created but sign-in failed. Please log in.' };
   }
 
   const headerStore = await headers();
@@ -94,23 +219,28 @@ export async function loginAction(formData: FormData): Promise<AuthResult> {
   const headerStore = await headers();
   const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
 
+  // Rate-limit BEFORE attempting sign-in. Checking only after a failure (the
+  // previous version) throttled the error message while letting the actual
+  // password-guessing calls through unbounded.
+  const authCheck = await checkAuthIPLimit(ip);
+  if (!authCheck.allowed) {
+    return {
+      success: false,
+      error: 'Too many login attempts. Please try again later.',
+      retryAfter: authCheck.retryAfter,
+    };
+  }
+
   const supabase = await createClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error || !data.user) {
-    const authCheck = await checkAuthIPLimit(ip);
-    if (!authCheck.allowed) {
-      return {
-        success: false,
-        error: 'Too many failed login attempts. Please try again later.',
-        retryAfter: authCheck.retryAfter,
-      };
-    }
     return { success: false, error: 'Invalid email or password' };
   }
 
-  const { data: userRow } = await supabase
+  const service = await createServiceClient();
+  const { data: userRow } = await service
     .from('users')
     .select('role, phone, phone_verified')
     .eq('id', data.user.id)
@@ -131,9 +261,8 @@ export async function loginAction(formData: FormData): Promise<AuthResult> {
 }
 
 export async function sendOTPAction(phone: string): Promise<AuthResult> {
-  // Validate E.164 format to prevent SMS toll fraud
-  const parsed = PhoneSchema.safeParse(phone);
-  if (!parsed.success) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) {
     return { success: false, error: 'INVALID_PHONE_FORMAT' };
   }
 
@@ -142,18 +271,29 @@ export async function sendOTPAction(phone: string): Promise<AuthResult> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
 
+  // Only allow sending to the caller's own registered phone (SMS abuse guard)
+  const service = await createServiceClient();
+  const { data: userRow } = await service
+    .from('users')
+    .select('phone')
+    .eq('id', user.id)
+    .single();
+  if (!userRow || userRow.phone !== normalized) {
+    return { success: false, error: 'PHONE_MISMATCH' };
+  }
+
   const headerStore = await headers();
   const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
-  const result = await sendOTP(phone, ip);
+  const result = await sendOTP(normalized, ip);
   return result.success
     ? { success: true }
     : { success: false, error: result.error };
 }
 
 export async function verifyOTPAction(phone: string, code: string): Promise<AuthResult> {
-  const result = await verifyOTP(phone, code);
-  if (!result.success) {
-    return { success: false, error: result.error };
+  const normalized = normalizePhone(phone);
+  if (!normalized) {
+    return { success: false, error: 'INVALID_PHONE_FORMAT' };
   }
 
   // Must have a valid session
@@ -169,14 +309,21 @@ export async function verifyOTPAction(phone: string, code: string): Promise<Auth
     .single();
 
   // Confirm the phone in the URL matches the phone stored for this user during registration
-  if (!userRow || userRow.phone !== phone) {
+  if (!userRow || userRow.phone !== normalized) {
     return { success: false, error: 'PHONE_MISMATCH' };
+  }
+
+  const result = await verifyOTP(normalized, code);
+  if (!result.success) {
+    return { success: false, error: result.error };
   }
 
   await Promise.all([
     service.from('users').update({ phone_verified: true }).eq('id', user.id),
-    // Store in auth metadata so middleware can check without extra DB query
-    supabase.auth.updateUser({ data: { phone_verified: true } }),
+    // app_metadata (not user_metadata) so the flag cannot be self-granted client-side
+    service.auth.admin.updateUserById(user.id, {
+      app_metadata: { role: userRow.role, phone_verified: true },
+    }),
   ]);
 
   const role = userRow.role ?? 'consumer';
