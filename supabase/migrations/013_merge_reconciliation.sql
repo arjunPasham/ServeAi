@@ -1,6 +1,7 @@
--- 011_merge_reconciliation.sql
--- Reconciles the two parallel hardening passes (009_security_hardening.sql and
--- 010_feedback_guards.sql) after merging branches. Run after 001–010.
+-- 013_merge_reconciliation.sql (renamed from 011 alongside the
+-- 009_security_hardening → 012 rename; must always apply after 012)
+-- Reconciles the two parallel hardening passes (012_security_hardening.sql and
+-- 010_feedback_guards.sql) after merging branches. Run after 001–012.
 
 -- ─── FIX 1: revert_listing_to_live lost its EXECUTE revoke ────────────────────
 -- 010 dropped revert_listing_to_live(UUID) and created (UUID, TEXT). A DROP +

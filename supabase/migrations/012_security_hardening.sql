@@ -1,6 +1,7 @@
--- 009_security_hardening.sql
+-- 012_security_hardening.sql (renamed from 009_security_hardening.sql — the
+-- 009 version prefix collided with 009_storage.sql and broke Supabase Preview)
 -- Security + correctness fixes from the 2026-07-06 pre-showcase audit.
--- Run after 001–008.
+-- Run after 001–010. 013_merge_reconciliation.sql must run after this file.
 
 -- ─── FIX 1: privilege escalation via users_update_own ─────────────────────────
 -- The RLS policy allows a user to UPDATE their own row with no column
@@ -40,7 +41,8 @@ REVOKE EXECUTE ON FUNCTION confirm_delivery(UUID, UUID)                         
 REVOKE EXECUTE ON FUNCTION accept_dispatch(UUID, UUID, UUID)                       FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION publish_listing(UUID, UUID, BOOLEAN)                    FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION hide_expired_listing(UUID)                              FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION revert_listing_to_live(UUID)                            FROM PUBLIC, anon, authenticated;
+-- (UUID, TEXT): 010_feedback_guards dropped the original one-arg signature
+REVOKE EXECUTE ON FUNCTION revert_listing_to_live(UUID, TEXT)                      FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION create_draft_listing(UUID, TEXT, NUMERIC, NUMERIC, BOOLEAN, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, TEXT) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION get_nearest_couriers(FLOAT8, FLOAT8, BOOLEAN, FLOAT8, INTEGER) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION submit_feedback(UUID, UUID, TEXT, TEXT)                 FROM PUBLIC, anon, authenticated;

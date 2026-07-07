@@ -7,8 +7,8 @@ export type FeedbackResult =
   | { success: true }
   | { success: false; error: string };
 
-// Map submit_feedback RPC exceptions (011_merge_reconciliation.sql — the
-// consolidated version of 009/010) to stable client codes
+// Map submit_feedback RPC exceptions (013_merge_reconciliation.sql — the
+// consolidated version of 010/012) to stable client codes
 function mapFeedbackError(message: string | undefined): string {
   if (!message) return 'SERVER_ERROR';
   if (message.includes('DISPUTE_WINDOW_EXPIRED')) return 'DISPUTE_WINDOW_EXPIRED';
