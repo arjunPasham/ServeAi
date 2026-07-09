@@ -26,6 +26,7 @@ Smarty all have simulated dev modes:
 | Google Routes | Straight-line ETA estimate |
 | Smarty | Any address accepted (synthetic Detroit coords) |
 | Stripe Connect | Onboarding simulated (instant `payouts_enabled`) |
+| Resend | Emails logged to console |
 
 > ⚠️ The previous `.env.local` shipped with a real Gemini API key. **Rotate that key** in Google AI Studio.
 

@@ -1,6 +1,7 @@
 import { inngest } from '../client';
 import { createServiceClient } from '@/lib/supabase/server';
 import { sendDispatchNotification, sendConsumerRefundNotification } from '@/lib/onesignal';
+import { sendEmail, getUserEmail } from '@/lib/email';
 import { refundOrderPayment } from '@/lib/stripe';
 
 // 4 sequential offers × 5-minute acceptance windows ≈ the PRD's 20-minute cap
@@ -69,6 +70,18 @@ export const courierDispatch = inngest.createFunction(
 
       await step.run(`notify-courier-${offer}`, async () => {
         await sendDispatchNotification(courier.user_id, event.data.order_id);
+        try {
+          const email = await getUserEmail(courier.user_id);
+          if (email) {
+            await sendEmail({
+              to: email,
+              subject: 'New delivery offer — FoodLink',
+              text: 'New delivery offer — open your dashboard to accept (expires in 5 minutes).',
+            });
+          }
+        } catch (err) {
+          console.error('[courier-dispatch] email notify failed:', err);
+        }
       });
 
       // Wait up to 5 minutes; accept/decline actions emit dispatch/responded,
@@ -138,6 +151,18 @@ export const courierDispatch = inngest.createFunction(
       });
 
       await sendConsumerRefundNotification(order.consumer_id, event.data.detected_item);
+      try {
+        const email = await getUserEmail(order.consumer_id);
+        if (email) {
+          await sendEmail({
+            to: email,
+            subject: 'Order refunded — FoodLink',
+            text: `We couldn't find a courier for "${event.data.detected_item}". You will receive a full refund.`,
+          });
+        }
+      } catch (err) {
+        console.error('[courier-dispatch] refund email notify failed:', err);
+      }
     });
 
     return { accepted: false, refunded: true };
