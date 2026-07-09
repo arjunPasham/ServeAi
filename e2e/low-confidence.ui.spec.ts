@@ -52,6 +52,12 @@ test.describe('low-confidence scan requires correction before publish', () => {
     await expect(page.getByText(/We.re not fully confident/i)).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Unlabeled Casserole')).toBeVisible();
 
+    // Pin the invariant: before the donor makes an explicit correction, there
+    // is NO path forward — the details form (and its "Continue to pricing"
+    // button) must not exist yet. This is what "cannot publish without
+    // correction" means at the UI level.
+    await expect(page.getByRole('button', { name: /Continue to pricing/i })).toHaveCount(0);
+
     // Confirm the suggested item — this is the "correction" the donor must take.
     await page.getByText('Unlabeled Casserole').click();
 

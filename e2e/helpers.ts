@@ -59,12 +59,14 @@ export function newContext(prefix: string): TestContext {
   return { runId: newRunId(prefix), userIds: [], listingIds: [], orderIds: [] };
 }
 
-// +1 313 555 XXXX — Detroit area code, a synthetic exchange, and a random
-// 4-digit line number so it never collides with a real number or another
-// concurrently-running test file.
+// +1 313 XXX XXXX — Detroit area code plus 7 varying digits derived from the
+// millisecond timestamp and a UUID. users.phone is UNIQUE, and 4 random
+// digits (10k values) flaked under parallel spec files; ms-timestamp + random
+// gives ~10^7 spread per millisecond, so collisions are effectively impossible.
 function fakePhone(): string {
-  const digits = randomUUID().replace(/\D/g, '').slice(0, 4).padEnd(4, '0');
-  return `+1313555${digits}`;
+  const ts = Date.now().toString().slice(-4);
+  const rand = randomUUID().replace(/\D/g, '').padEnd(3, '7').slice(0, 3);
+  return `+1313${ts}${rand}`;
 }
 
 export type Role = 'donor' | 'consumer' | 'courier';
@@ -264,9 +266,45 @@ export async function createOrder(
  * Deletes everything tracked on the context, in FK-safe order:
  * feedback_events/dispatch_events (children of orders) -> orders -> listings
  * -> auth users (which cascades to public.users and the role profile table).
+ *
+ * Beyond the explicitly-tracked ids, orders/listings are ALSO swept by
+ * ctx.userIds: a spec that fails mid-test may have created rows through the
+ * app (claim actions, RPCs) that were never pushed onto the context, and any
+ * such row would FK-block auth.admin.deleteUser below.
+ *
+ * audit_log rows created by the run persist by design — DELETE on audit_log
+ * is revoked (005_audit.sql); the log is append-only even for tests.
  */
 export async function cleanup(ctx: TestContext): Promise<void> {
   const service = getServiceClient();
+
+  // Sweep untracked rows owned by this run's users
+  if (ctx.userIds.length) {
+    const { data: userOrders } = await service
+      .from('orders')
+      .select('id')
+      .or(`consumer_id.in.(${ctx.userIds.join(',')}),courier_id.in.(${ctx.userIds.join(',')})`);
+    for (const row of userOrders ?? []) {
+      if (!ctx.orderIds.includes(row.id)) ctx.orderIds.push(row.id);
+    }
+    const { data: userListings } = await service
+      .from('listings')
+      .select('id')
+      .in('donor_id', ctx.userIds);
+    for (const row of userListings ?? []) {
+      if (!ctx.listingIds.includes(row.id)) ctx.listingIds.push(row.id);
+    }
+    // Orders against this run's listings may belong to non-test consumers too
+    if (ctx.listingIds.length) {
+      const { data: listingOrders } = await service
+        .from('orders')
+        .select('id')
+        .in('listing_id', ctx.listingIds);
+      for (const row of listingOrders ?? []) {
+        if (!ctx.orderIds.includes(row.id)) ctx.orderIds.push(row.id);
+      }
+    }
+  }
 
   if (ctx.orderIds.length) {
     await service.from('feedback_events').delete().in('order_id', ctx.orderIds);

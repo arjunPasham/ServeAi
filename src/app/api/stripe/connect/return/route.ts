@@ -14,7 +14,6 @@ const DASHBOARD: Record<string, string> = {
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const role = url.searchParams.get('role');
   const isRefresh = url.searchParams.get('refresh') === '1';
 
   const supabase = await createClient();
@@ -23,11 +22,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/login', req.url));
   }
 
+  const service = await createServiceClient();
+
+  // Role comes from the database, never from the query string — a consumer
+  // hitting this URL with ?role=donor must not flip donor_profiles state.
+  const { data: userRow } = await service
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  const role = userRow?.role;
   if (role !== 'donor' && role !== 'courier') {
     return NextResponse.redirect(new URL('/login', req.url));
   }
 
-  const service = await createServiceClient();
   const table = PROFILE_TABLE[role];
 
   const { data: profile } = await service

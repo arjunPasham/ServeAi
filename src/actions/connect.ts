@@ -54,18 +54,36 @@ export async function startConnectOnboarding(): Promise<StartConnectOnboardingRe
     const { accountId: newAccountId } = await createConnectAccount({ userId: user.id, email });
     accountId = newAccountId;
 
-    const { error: updateError } = await service
+    // Conditional write: only claim the slot if it is still empty, so two
+    // concurrent onboarding clicks can't each create a Stripe account and
+    // orphan one id. Zero rows updated = we lost the race — reuse the winner.
+    const { data: claimed, error: updateError } = await service
       .from(table)
       .update({ stripe_account_id: accountId })
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .is('stripe_account_id', null)
+      .select('stripe_account_id');
     if (updateError) {
       return { success: false, error: 'SERVER_ERROR' };
     }
+    if (!claimed?.length) {
+      const { data: existing } = await service
+        .from(table)
+        .select('stripe_account_id')
+        .eq('user_id', user.id)
+        .single();
+      if (!existing?.stripe_account_id) {
+        return { success: false, error: 'SERVER_ERROR' };
+      }
+      accountId = existing.stripe_account_id as string;
+    }
   }
 
+  // The return route derives role from the users table server-side — no role
+  // param in the URL (a client-supplied one was ignored anyway).
   const base = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-  const returnUrl = `${base}/api/stripe/connect/return?role=${role}`;
-  const refreshUrl = `${base}/api/stripe/connect/return?role=${role}&refresh=1`;
+  const returnUrl = `${base}/api/stripe/connect/return`;
+  const refreshUrl = `${base}/api/stripe/connect/return?refresh=1`;
 
   const { url } = await createConnectOnboardingLink({ accountId, refreshUrl, returnUrl });
 

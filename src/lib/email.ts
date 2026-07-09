@@ -28,7 +28,16 @@ export async function sendEmail(params: {
     });
 
     if (!res.ok) {
-      console.error(`[email] Resend API error: ${res.status} ${await res.text()}`);
+      // Log status + Resend's machine-readable error name only — the raw
+      // response can echo the recipient address (PII) into prod logs.
+      let errorName = 'unknown';
+      try {
+        const body = (await res.json()) as { name?: string };
+        if (body?.name) errorName = body.name;
+      } catch {
+        // non-JSON error body — status alone will have to do
+      }
+      console.error(`[email] Resend API error: status=${res.status} code=${errorName}`);
       return { sent: false };
     }
 

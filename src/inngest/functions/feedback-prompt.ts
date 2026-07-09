@@ -13,10 +13,12 @@ export const feedbackPrompt = inngest.createFunction(
       try {
         const email = await getUserEmail(event.data.consumer_id);
         if (email) {
+          // Sent 30 min after delivery, so the 2-hour dispute window has
+          // ~90 minutes left — the deadline must read relative to NOW.
           await sendEmail({
             to: email,
             subject: 'How was your order? — FoodLink',
-            text: 'How was your order? Report any issue within the 2-hour window.',
+            text: 'How was your order? If anything was wrong, you have about 90 minutes remaining to report an issue.',
           });
         }
       } catch (err) {
