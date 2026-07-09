@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:scan": "tsx scripts/test-scan.ts"
+    "test:scan": "tsx scripts/test-scan.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@google/genai": "^2.10.0",
@@ -28,6 +29,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

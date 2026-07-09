@@ -130,16 +130,66 @@ function safeFailure(notes: string): FoodScanResult {
   };
 }
 
+// DEV BYPASS: when GEMINI_API_KEY is not set, return a deterministic synthetic
+// result instead of calling the model. Mirrors the twilio.ts/stripe.ts pattern
+// so `npm run dev` (and the E2E suite) works with zero Gemini quota spent.
+// Filenames containing "lowconf" simulate a low-confidence scan that must be
+// routed through the FoodScanner correction UI before a listing can publish.
+function devModeScanResult(filename?: string): FoodScanResult {
+  const isLowConfidence = (filename ?? '').toLowerCase().includes('lowconf');
+
+  if (isLowConfidence) {
+    return {
+      items: [
+        {
+          foodName: 'Unlabeled Casserole',
+          category: 'Mixed/Prepared Meal',
+          estimatedQuantity: 4,
+          unit: 'lbs',
+          estimatedServings: 6,
+          confidence: 0.55,
+        },
+      ],
+      overallConfidence: 0.55,
+      needsManualReview: true,
+      notes: '[DEV MODE] Synthetic scan — GEMINI_API_KEY not set.',
+    };
+  }
+
+  return {
+    items: [
+      {
+        foodName: 'Penne Pasta Tray',
+        category: 'Pasta',
+        estimatedQuantity: 8,
+        unit: 'lbs',
+        estimatedServings: 12,
+        confidence: 0.93,
+      },
+    ],
+    overallConfidence: 0.93,
+    needsManualReview: false,
+    notes: '[DEV MODE] Synthetic scan — GEMINI_API_KEY not set.',
+  };
+}
+
 /**
  * Scan a single food image and return a structured estimate.
  *
  * @param imageBase64 Base64-encoded image bytes (no data: URL prefix).
  * @param mimeType    e.g. "image/jpeg", "image/png", "image/webp".
+ * @param filename    Original upload filename — DEV mode only, used to pick a
+ *                     deterministic synthetic result (see devModeScanResult).
  */
 export async function scanFoodImage(
   imageBase64: string,
   mimeType: string,
+  filename?: string,
 ): Promise<FoodScanResult> {
+  if (!process.env.GEMINI_API_KEY) {
+    return devModeScanResult(filename);
+  }
+
   try {
     const ai = getClient();
 

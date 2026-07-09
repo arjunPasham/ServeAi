@@ -74,7 +74,7 @@ export async function POST(req: Request): Promise<Response> {
   const buffer = Buffer.from(arrayBuffer);
   const imageBase64 = buffer.toString('base64');
 
-  const result = await scanFoodImage(imageBase64, image.type);
+  const result = await scanFoodImage(imageBase64, image.type, image.name);
 
   // Persist the photo so the listing shows the real food, not a placeholder.
   // Server-generated path — the client never controls storage keys. The bucket
