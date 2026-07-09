@@ -5,10 +5,20 @@
 // routes here. On confirmed payment the Stripe webhook triggers courier dispatch.
 // In dev mode (no Stripe keys) this page is never reached.
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useMemo, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
+
+// Reads the checkout client_secret stashed in sessionStorage by browse.
+// undefined = not resolved yet (server/first paint), null = missing/expired.
+function useCheckoutSecret(orderId: string): string | null | undefined {
+  return useSyncExternalStore<string | null | undefined>(
+    () => () => {},
+    () => sessionStorage.getItem(`checkout:${orderId}`),
+    () => undefined,
+  );
+}
 
 function CheckoutForm({ orderId }: { orderId: string }) {
   const stripe = useStripe();
@@ -66,20 +76,14 @@ function CheckoutForm({ orderId }: { orderId: string }) {
 export default function CheckoutPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params);
   const router = useRouter();
-  const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [missing, setMissing] = useState(false);
+  const clientSecret = useCheckoutSecret(orderId);
+  const missing = clientSecret === null;
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   const stripePromise = useMemo(
     () => (publishableKey ? loadStripe(publishableKey) : null),
     [publishableKey]
   );
-
-  useEffect(() => {
-    const secret = sessionStorage.getItem(`checkout:${orderId}`);
-    if (secret) setClientSecret(secret);
-    else setMissing(true);
-  }, [orderId]);
 
   return (
     <div className="min-h-screen bg-gray-50">

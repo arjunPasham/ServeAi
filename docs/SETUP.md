@@ -30,19 +30,19 @@ Smarty all have simulated dev modes:
 
 ## 3. Set up the database
 
-In the Supabase SQL editor, run **in filename order**:
+In the Supabase SQL editor, run every file in `supabase/migrations/` **in
+filename order**, then the seed:
 
-1. `001_extensions.sql` … `008_rpcs.sql`
-2. `009_security_hardening.sql` (RPC hardening, role-escalation lock)
-3. `009_storage.sql` (private listing-photos bucket, SH-3)
-4. `010_feedback_guards.sql` (feedback ownership + dispute window)
-5. `011_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
-6. `seed.sql` (USDA prices)
+1. `001_extensions.sql` … `009_storage.sql` (schema, RLS, RPCs, audit, indexes, private listing-photos bucket)
+2. `010_feedback_guards.sql` (feedback ownership + dispute window)
+3. `012_security_hardening.sql` (RPC hardening, role-escalation lock)
+4. `013_merge_reconciliation.sql` (reconciles the parallel security/fix branches, re-applies EXECUTE revokes)
+5. `../seed.sql` (USDA prices — `supabase/seed.sql`)
 
-> Note: two files share the `009` prefix (`009_security_hardening.sql` and
-> `009_storage.sql`) — a harmless numbering collision from two parallel
-> branches. Run both; order between them doesn't matter. `011` reconciles the
-> overlap, so the final state is correct regardless.
+> Note: the numbering jumps from `010` to `012` — **there is no `011`**. Two
+> parallel branches each added a migration `009`; the collision was resolved by
+> renaming them to `012`/`013`. Just run every `.sql` file that is present, in
+> order, and the final state is correct.
 
 ## 4. Run
 

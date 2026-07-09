@@ -24,7 +24,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   const [isPending, startTransition] = useTransition();
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+  const [fetchedImageUrl, setFetchedImageUrl] = useState<string | null>(null);
 
   const listing = order?.listings as unknown as {
     detected_item: string;
@@ -35,15 +35,18 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
     temperature_sensitive: boolean;
   } | null;
 
+  // Direct URLs render as-is; storage keys need a signed URL fetched on the server.
+  const rawImageUrl = listing?.image_url ?? null;
+  const isDirectUrl = !!rawImageUrl && (rawImageUrl.startsWith('http://') || rawImageUrl.startsWith('https://'));
+
   useEffect(() => {
-    if (!listing?.image_url) { setSignedImageUrl(null); return; }
-    if (listing.image_url.startsWith('http://') || listing.image_url.startsWith('https://')) {
-      setSignedImageUrl(listing.image_url);
-      return;
-    }
-    // Storage key — fetch signed URL via server action
-    getSignedImageUrl(listing.image_url).then(setSignedImageUrl);
-  }, [listing?.image_url]);
+    if (!rawImageUrl || isDirectUrl) return;
+    let active = true;
+    getSignedImageUrl(rawImageUrl).then(url => { if (active) setFetchedImageUrl(url); });
+    return () => { active = false; };
+  }, [rawImageUrl, isDirectUrl]);
+
+  const signedImageUrl = !rawImageUrl ? null : isDirectUrl ? rawImageUrl : fetchedImageUrl;
 
   useEffect(() => {
     getOrderDetails(id).then(data => {
@@ -132,7 +135,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                 {STATUS_LABEL[order.status] ?? order.status}
               </p>
               {order.status === 'pending_dispatch' && (
-                <p className="text-xs text-gray-500 mt-1">We're finding the nearest courier</p>
+                <p className="text-xs text-gray-500 mt-1">We&apos;re finding the nearest courier</p>
               )}
             </div>
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { centsToDisplay } from '@/lib/pricing';
+import { useNow } from '@/lib/useNow';
 
 interface ListingCardProps {
   id: string;
@@ -28,9 +29,10 @@ export function ListingCard({
   claiming,
 }: ListingCardProps) {
   const originLabel = donorType === 'commercial' ? 'Restaurant' : 'Household';
+  const now = useNow();
 
-  const minutesRemaining = safetyExpiresAt
-    ? Math.max(0, Math.round((new Date(safetyExpiresAt).getTime() - Date.now()) / 60000))
+  const minutesRemaining = safetyExpiresAt && now
+    ? Math.max(0, Math.round((new Date(safetyExpiresAt).getTime() - now) / 60000))
     : null;
 
   const urgentExpiry = minutesRemaining !== null && minutesRemaining < 60;

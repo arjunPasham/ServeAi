@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   computePricing,
   centsToDisplay,
   PricingInput,
   PricingResult,
 } from '@/lib/pricing';
+import { useNow } from '@/lib/useNow';
 
 interface PricingSliderProps {
   initialPricing: PricingResult;
@@ -29,11 +30,15 @@ export function PricingSlider({
 }: PricingSliderProps) {
   const [donorPayout, setDonorPayout] = useState(initialPricing.suggestedDonorPayoutCents);
   const [preparedAt, setPreparedAt] = useState('');
+  const now = useNow();
 
-  // Reset slider when inputs change (e.g., donor changed quantity or category)
-  useEffect(() => {
+  // Reset the slider when the AI suggestion changes (e.g. donor changed quantity
+  // or category) — adjust during render rather than in an effect.
+  const [prevSuggested, setPrevSuggested] = useState(initialPricing.suggestedDonorPayoutCents);
+  if (prevSuggested !== initialPricing.suggestedDonorPayoutCents) {
+    setPrevSuggested(initialPricing.suggestedDonorPayoutCents);
     setDonorPayout(initialPricing.suggestedDonorPayoutCents);
-  }, [initialPricing.suggestedDonorPayoutCents]);
+  }
 
   // Recompute on every slider move — memoize stable parts
   const pricing = useMemo(
@@ -74,9 +79,9 @@ export function PricingSlider({
   }
 
   // max for datetime-local in local wall-clock time (not UTC)
-  const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16);
+  const nowLocal = now
+    ? new Date(now - new Date(now).getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+    : undefined;
 
   const canConfirm = !temperatureSensitive || preparedAt.trim() !== '';
 
