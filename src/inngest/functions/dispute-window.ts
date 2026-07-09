@@ -28,6 +28,25 @@ export const disputeWindow = inngest.createFunction(
       return { skipped: true, reason: 'donor_transfer_already_exists' };
     }
 
+    // Window closed with no consumer feedback → record implicit acceptance
+    // (PRD §8.3). Direct insert as the system path — the submit_feedback RPC
+    // is the consumer path and raises on edge cases the system must tolerate.
+    await step.run('record-implicit-accept', async () => {
+      const supabase = await createServiceClient();
+      const { data: existing } = await supabase
+        .from('feedback_events')
+        .select('id')
+        .eq('order_id', event.data.order_id)
+        .limit(1);
+      if (existing?.length || !event.data.consumer_id) return;
+
+      await supabase.from('feedback_events').insert({
+        order_id: event.data.order_id,
+        consumer_id: event.data.consumer_id,
+        outcome: 'implicit_accept',
+      });
+    });
+
     // Donor has no connected Stripe account (or charge is missing in dev mode):
     // record it for manual payout instead of throwing into a retry loop that
     // never succeeds and never alerts anyone.
