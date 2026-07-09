@@ -17,6 +17,16 @@ const PREFIX_ROLE: Record<string, string> = {
 };
 
 export async function updateSession(request: NextRequest) {
+  // Demo mode is anonymous by design: skip the Supabase auth round-trip (and
+  // any redirect logic) for /demo/* once the demo cookie is set. Demo routes
+  // are never in PREFIX_ROLE, so this is purely belt-and-suspenders + speed.
+  if (
+    request.nextUrl.pathname.startsWith('/demo') &&
+    request.cookies.get('demo_mode')?.value === '1'
+  ) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(

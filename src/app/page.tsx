@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Store, ShoppingBasket, Bike, ShieldCheck, Clock, HandCoins, ArrowRight } from 'lucide-react';
+import { Store, ShoppingBasket, Bike, ShieldCheck, Clock, HandCoins, ArrowRight, Play } from 'lucide-react';
 
 const ROLES = [
   {
@@ -99,7 +99,7 @@ export default function HomePage() {
             with couriers handling same-day pickup and delivery before anything spoils.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-3 mb-16">
+          <div className="flex flex-col sm:flex-row gap-3 mb-4">
             <Link
               href="/register"
               className="group inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-primary-foreground font-semibold px-7 py-3.5 rounded-full text-sm transition-colors shadow-sm min-h-[44px]"
@@ -114,6 +114,15 @@ export default function HomePage() {
               Sign in
             </Link>
           </div>
+
+          <Link
+            href="/demo"
+            className="group inline-flex items-center gap-2 text-sm font-semibold text-accent hover:text-accent-hover transition-colors mb-16"
+          >
+            <Play className="w-4 h-4" />
+            Or simulate the system — no account needed
+            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+          </Link>
 
           {/* Role cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full text-left">
