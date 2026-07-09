@@ -25,6 +25,7 @@ Smarty all have simulated dev modes:
 | OneSignal | Push notifications logged to server console |
 | Google Routes | Straight-line ETA estimate |
 | Smarty | Any address accepted (synthetic Detroit coords) |
+| Stripe Connect | Onboarding simulated (instant `payouts_enabled`) |
 
 > ⚠️ The previous `.env.local` shipped with a real Gemini API key. **Rotate that key** in Google AI Studio.
 
@@ -33,16 +34,18 @@ Smarty all have simulated dev modes:
 In the Supabase SQL editor, run **in filename order**:
 
 1. `001_extensions.sql` … `008_rpcs.sql`
-2. `009_security_hardening.sql` (RPC hardening, role-escalation lock)
-3. `009_storage.sql` (private listing-photos bucket, SH-3)
-4. `010_feedback_guards.sql` (feedback ownership + dispute window)
-5. `011_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
-6. `seed.sql` (USDA prices)
+2. `009_storage.sql` (private listing-photos bucket, SH-3)
+3. `010_feedback_guards.sql` (feedback ownership + dispute window)
+4. `012_security_hardening.sql` (RPC hardening, role-escalation lock)
+5. `013_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
+6. `014_connect_onboarding.sql` (Stripe Connect Express onboarding — `stripe_account_id`/`payouts_enabled` columns)
+7. `seed.sql` (USDA prices)
 
-> Note: two files share the `009` prefix (`009_security_hardening.sql` and
-> `009_storage.sql`) — a harmless numbering collision from two parallel
-> branches. Run both; order between them doesn't matter. `011` reconciles the
-> overlap, so the final state is correct regardless.
+> Note: `012_security_hardening.sql` was renamed from `009_security_hardening.sql`
+> (its original `009` prefix collided with `009_storage.sql`), and
+> `013_merge_reconciliation.sql` was renamed from `011_merge_reconciliation.sql`.
+> `013` reconciles the 012/010 overlap, so the final state is correct regardless
+> of exact run order between 009–013.
 
 ## 4. Run
 

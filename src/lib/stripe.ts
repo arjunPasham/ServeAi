@@ -160,3 +160,52 @@ export async function transferToDonor(params: {
     metadata: { order_id: params.orderId, reason: 'donor_payout' },
   });
 }
+
+// ─── Stripe Connect Express onboarding (TRD Step 3/10, decision #2: Express) ──
+
+export async function createConnectAccount(params: {
+  userId: string;
+  email: string;
+}): Promise<{ accountId: string }> {
+  if (isStripeDevMode()) {
+    const accountId = `acct_dev_${randomUUID()}`;
+    console.log(`[DEV] Simulated Connect account ${accountId} for user ${params.userId}`);
+    return { accountId };
+  }
+
+  const account = await getStripe().accounts.create({
+    type: 'express',
+    email: params.email,
+    capabilities: { transfers: { requested: true } },
+    metadata: { user_id: params.userId },
+  });
+  return { accountId: account.id };
+}
+
+export async function createConnectOnboardingLink(params: {
+  accountId: string;
+  refreshUrl: string;
+  returnUrl: string;
+}): Promise<{ url: string }> {
+  if (isStripeDevMode()) {
+    // Simulates instant completion — dev mode has no real onboarding flow
+    return { url: params.returnUrl };
+  }
+
+  const accountLink = await getStripe().accountLinks.create({
+    account: params.accountId,
+    refresh_url: params.refreshUrl,
+    return_url: params.returnUrl,
+    type: 'account_onboarding',
+  });
+  return { url: accountLink.url };
+}
+
+export async function getConnectAccountStatus(accountId: string): Promise<{ payoutsEnabled: boolean }> {
+  if (isStripeDevMode() || accountId.startsWith('acct_dev_')) {
+    return { payoutsEnabled: true };
+  }
+
+  const account = await getStripe().accounts.retrieve(accountId);
+  return { payoutsEnabled: account.payouts_enabled === true };
+}

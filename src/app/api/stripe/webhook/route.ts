@@ -129,6 +129,41 @@ export async function POST(req: Request) {
       break;
     }
 
+    case 'account.updated': {
+      const account = event.data.object as Stripe.Account;
+      const payoutsEnabled = account.payouts_enabled === true;
+
+      // Only one of these two updates will match a row (donor OR courier account)
+      const { data: donorRows } = await service
+        .from('donor_profiles')
+        .update({ payouts_enabled: payoutsEnabled })
+        .eq('stripe_account_id', account.id)
+        .select('user_id');
+
+      const { data: courierRows } = await service
+        .from('courier_profiles')
+        .update({ payouts_enabled: payoutsEnabled })
+        .eq('stripe_account_id', account.id)
+        .select('user_id');
+
+      const userId = donorRows?.[0]?.user_id ?? courierRows?.[0]?.user_id ?? null;
+
+      if (userId) {
+        await service.from('audit_log').insert({
+          entity_type: 'connect_account',
+          entity_id: userId,
+          event_type: 'connect_account_updated',
+          actor_id: null,
+          actor_role: 'system',
+          payload: {
+            account_id: account.id,
+            payouts_enabled: payoutsEnabled,
+          },
+        });
+      }
+      break;
+    }
+
     default:
       // Unhandled event — return 200 so Stripe doesn't retry
       break;
