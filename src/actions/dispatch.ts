@@ -3,7 +3,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { inngest } from '@/inngest/client';
 import { notifyDeliveryConfirmed } from '@/services/n8n';
-import { transferToCourier } from '@/lib/stripe';
+import { transferToCourier, canReceiveTransfers } from '@/lib/stripe';
 import { redirect } from 'next/navigation';
 
 export type DispatchActionResult =
@@ -155,13 +155,20 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
       .maybeSingle(),
     service
       .from('courier_profiles')
-      .select('stripe_account_id')
+      .select('stripe_account_id, payouts_enabled')
       .eq('user_id', user.id)
       .single(),
   ]);
 
-  // Unconditional courier payout (does not wait for dispute window — PRD §3.2)
-  if (courierProfile?.stripe_account_id && order.stripe_charge_id) {
+  // Same eligibility rules as the donor payout path: onboarding must be
+  // complete and acct_dev_* ids are never payable outside dev mode.
+  const courierEligibility = canReceiveTransfers({
+    stripeAccountId: courierProfile?.stripe_account_id,
+    payoutsEnabled: courierProfile?.payouts_enabled === true,
+  });
+
+  // Courier payout does not wait for the dispute window — PRD §3.2
+  if (courierEligibility.ok && courierProfile?.stripe_account_id && order.stripe_charge_id) {
     try {
       const courierTransfer = await transferToCourier({
         amountCents: listing.courier_fee_cents,
@@ -199,7 +206,8 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
       });
     }
   } else {
-    // Missing Stripe account or charge — record it so ops can pay out manually
+    // Not payable (missing/dev/un-onboarded account, or missing charge) —
+    // record it so ops can pay out manually
     await service.from('audit_log').insert({
       entity_type: 'order',
       entity_id: orderId,
@@ -208,6 +216,7 @@ export async function confirmDelivery(orderId: string): Promise<DispatchActionRe
       actor_role: 'system',
       payload: {
         amount_cents: listing.courier_fee_cents,
+        reason: !courierEligibility.ok ? courierEligibility.reason : 'missing_charge',
         has_stripe_account: Boolean(courierProfile?.stripe_account_id),
         has_charge: Boolean(order.stripe_charge_id),
       },

@@ -42,7 +42,8 @@ filename order**, then the seed:
 5. `013_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
 6. `014_connect_onboarding.sql` (Stripe Connect Express onboarding — `stripe_account_id`/`payouts_enabled` columns)
 7. `015_fix_auth_trigger.sql` (**P0** — pins `search_path` in `handle_new_auth_user` so registration creates the `public.users` mirror row; backfills rows missed while broken. Verify with `node scripts/verify-auth-trigger.cjs`.)
-8. `seed.sql` (USDA prices — `supabase/seed.sql`)
+8. `016_feedback_implicit_accept_unique.sql` (partial unique index — makes the dispute-window implicit-accept insert race-proof)
+9. `seed.sql` (USDA prices — `supabase/seed.sql`)
 
 > ⚠️ `supabase/combined_migrations.sql` was generated from 001–013 only — it
 > does **not** include `014_connect_onboarding.sql`. If you bootstrapped the
@@ -104,6 +105,15 @@ Set the three Stripe env vars, then forward webhooks:
 ```bash
 stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
+
+> ⚠️ **Required when switching from dev mode to real keys:** run
+> `scripts/cleanup-dev-stripe-accounts.sql` in the Supabase SQL editor. Dev
+> mode mints synthetic `acct_dev_*` Connect accounts with instant
+> `payouts_enabled`; against real Stripe they can never receive transfers.
+> The script nulls them out so affected donors/couriers re-onboard. (The
+> `canReceiveTransfers()` guard also refuses `acct_dev_*` ids outside dev
+> mode, so a missed cleanup degrades to audited skipped payouts, not lost
+> money.)
 
 Flow changes: Buy now → card checkout (Stripe Elements) → `payment_intent.succeeded`
 webhook triggers courier dispatch. Abandoned checkouts release the listing after

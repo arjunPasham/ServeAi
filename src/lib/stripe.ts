@@ -202,10 +202,41 @@ export async function createConnectOnboardingLink(params: {
 }
 
 export async function getConnectAccountStatus(accountId: string): Promise<{ payoutsEnabled: boolean }> {
-  if (isStripeDevMode() || accountId.startsWith('acct_dev_')) {
+  if (isStripeDevMode()) {
     return { payoutsEnabled: true };
+  }
+  // A dev-onboarded synthetic account can never receive real transfers — never
+  // report it payable once real Stripe keys are in place. (See
+  // scripts/cleanup-dev-stripe-accounts.sql for purging these rows.)
+  if (accountId.startsWith('acct_dev_')) {
+    return { payoutsEnabled: false };
   }
 
   const account = await getStripe().accounts.retrieve(accountId);
   return { payoutsEnabled: account.payouts_enabled === true };
+}
+
+export type TransferEligibility =
+  | { ok: true }
+  | { ok: false; reason: 'no_stripe_account' | 'payouts_disabled' | 'dev_account_in_real_mode' };
+
+// Single guard for EVERY transfer path (donor payout, courier fee). An account
+// is payable only when it exists, onboarding finished (payouts_enabled), and
+// it isn't a synthetic acct_dev_* id left over from dev mode while real Stripe
+// keys are active. Callers route { ok: false } into their skipped-payout audit
+// branch — never into a retry loop.
+export function canReceiveTransfers(account: {
+  stripeAccountId: string | null | undefined;
+  payoutsEnabled: boolean;
+}): TransferEligibility {
+  if (!account.stripeAccountId) {
+    return { ok: false, reason: 'no_stripe_account' };
+  }
+  if (account.stripeAccountId.startsWith('acct_dev_') && !isStripeDevMode()) {
+    return { ok: false, reason: 'dev_account_in_real_mode' };
+  }
+  if (!account.payoutsEnabled) {
+    return { ok: false, reason: 'payouts_disabled' };
+  }
+  return { ok: true };
 }
