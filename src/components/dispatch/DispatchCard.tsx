@@ -1,6 +1,7 @@
 'use client';
 
 import { centsToDisplay } from '@/lib/pricing';
+import { useNow } from '@/lib/useNow';
 
 interface DispatchCardProps {
   orderId: string;
@@ -32,7 +33,8 @@ export function DispatchCard({
   accepting,
 }: DispatchCardProps) {
   const originLabel = donorType === 'commercial' ? 'Restaurant' : 'Household';
-  const minutesSinceOffer = Math.round((Date.now() - new Date(offeredAt).getTime()) / 60000);
+  const now = useNow();
+  const minutesSinceOffer = now ? Math.round((now - new Date(offeredAt).getTime()) / 60000) : 0;
   const minutesLeft = Math.max(0, 5 - minutesSinceOffer);
 
   return (

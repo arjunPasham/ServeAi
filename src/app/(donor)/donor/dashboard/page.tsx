@@ -1,5 +1,6 @@
 import { getDonorListings } from '@/actions/listing';
 import { centsToDisplay } from '@/lib/pricing';
+import { SafetyWindowNotice } from '@/components/listing/SafetyWindowNotice';
 import Link from 'next/link';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
@@ -36,7 +37,7 @@ export default async function DonorDashboardPage() {
       <main className="p-4 max-w-lg mx-auto space-y-3">
         {listings.length === 0 ? (
           <div className="text-center py-20 space-y-4">
-            <p className="text-gray-500 font-medium">You haven't posted any food yet</p>
+            <p className="text-gray-500 font-medium">You haven&apos;t posted any food yet</p>
             <Link
               href="/donor/listings/new"
               className="inline-flex min-h-[44px] items-center bg-green-600 hover:bg-green-700 text-white font-semibold rounded-full px-6 py-3 text-sm transition-colors"
@@ -47,9 +48,6 @@ export default async function DonorDashboardPage() {
         ) : (
           listings.map(listing => {
             const statusInfo = STATUS_LABEL[listing.status] ?? { label: listing.status, color: 'bg-gray-100 text-gray-600' };
-            const minutesLeft = listing.safety_expires_at
-              ? Math.max(0, Math.round((new Date(listing.safety_expires_at).getTime() - Date.now()) / 60000))
-              : null;
 
             return (
               <div key={listing.id} className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
@@ -68,10 +66,8 @@ export default async function DonorDashboardPage() {
                   </div>
                 </div>
 
-                {minutesLeft !== null && minutesLeft < 60 && listing.status === 'live' && (
-                  <p className="text-xs text-red-600 font-medium">
-                    Safety window expires in {minutesLeft} min
-                  </p>
+                {listing.safety_expires_at && listing.status === 'live' && (
+                  <SafetyWindowNotice expiresAt={listing.safety_expires_at} />
                 )}
 
                 <div className="text-xs text-gray-400">

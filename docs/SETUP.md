@@ -32,7 +32,8 @@ Smarty all have simulated dev modes:
 
 ## 3. Set up the database
 
-In the Supabase SQL editor, run **in filename order**:
+In the Supabase SQL editor, run every file in `supabase/migrations/` **in
+filename order**, then the seed:
 
 1. `001_extensions.sql` … `008_rpcs.sql`
 2. `009_storage.sql` (private listing-photos bucket, SH-3)
@@ -40,13 +41,14 @@ In the Supabase SQL editor, run **in filename order**:
 4. `012_security_hardening.sql` (RPC hardening, role-escalation lock)
 5. `013_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
 6. `014_connect_onboarding.sql` (Stripe Connect Express onboarding — `stripe_account_id`/`payouts_enabled` columns)
-7. `seed.sql` (USDA prices)
+7. `seed.sql` (USDA prices — `supabase/seed.sql`)
 
-> Note: `012_security_hardening.sql` was renamed from `009_security_hardening.sql`
-> (its original `009` prefix collided with `009_storage.sql`), and
-> `013_merge_reconciliation.sql` was renamed from `011_merge_reconciliation.sql`.
-> `013` reconciles the 012/010 overlap, so the final state is correct regardless
-> of exact run order between 009–013.
+> Note: the numbering jumps from `010` to `012` — **there is no `011`**. Two
+> parallel branches each added a migration `009`; the collision was resolved by
+> renaming them to `012`/`013` (`012_security_hardening.sql` was originally
+> `009_security_hardening.sql`, `013_merge_reconciliation.sql` was originally
+> `011_merge_reconciliation.sql`). `013` reconciles the 012/010 overlap, so the
+> final state is correct regardless of exact run order between 009–013.
 
 ## 4. Run
 
