@@ -41,7 +41,12 @@ filename order**, then the seed:
 4. `012_security_hardening.sql` (RPC hardening, role-escalation lock)
 5. `013_merge_reconciliation.sql` (consolidates 009/010, re-applies EXECUTE revokes)
 6. `014_connect_onboarding.sql` (Stripe Connect Express onboarding — `stripe_account_id`/`payouts_enabled` columns)
-7. `seed.sql` (USDA prices — `supabase/seed.sql`)
+7. `015_fix_auth_trigger.sql` (**P0** — pins `search_path` in `handle_new_auth_user` so registration creates the `public.users` mirror row; backfills rows missed while broken. Verify with `node scripts/verify-auth-trigger.cjs`.)
+8. `seed.sql` (USDA prices — `supabase/seed.sql`)
+
+> ⚠️ `supabase/combined_migrations.sql` was generated from 001–013 only — it
+> does **not** include `014_connect_onboarding.sql`. If you bootstrapped the
+> database from the combined file, run `014` (and any later migrations) on top.
 
 > Note: the numbering jumps from `010` to `012` — **there is no `011`**. Two
 > parallel branches each added a migration `009`; the collision was resolved by

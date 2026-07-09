@@ -57,20 +57,27 @@ CREATE TRIGGER users_updated_at
 
 -- Auto-create public.users row when Supabase Auth creates a new user.
 -- Role defaults to 'consumer' — registration flow updates it on first login.
-CREATE OR REPLACE FUNCTION handle_new_auth_user()
-RETURNS TRIGGER AS $$
+-- SECURITY DEFINER pins search_path (015_fix_auth_trigger.sql): GoTrue's
+-- session runs with search_path = auth, so an unqualified `users` resolved to
+-- auth.users and the insert silently no-oped, breaking registration.
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
 BEGIN
-  INSERT INTO users (id, email, role)
+  INSERT INTO public.users (id, email, role)
   VALUES (NEW.id, NEW.email, 'consumer')
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION handle_new_auth_user();
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
 -- ─── USDA COMMODITY PRICES ──────────────────────────────────────────────────
 -- Manually maintained in MVP; reviewed every 4 weeks (PRD §7.2.1).
@@ -1906,3 +1913,16 @@ ON CONFLICT (category) DO UPDATE
   SET price_per_lb            = EXCLUDED.price_per_lb,
       retail_benchmark_per_lb = EXCLUDED.retail_benchmark_per_lb,
       updated_at              = NOW();
+
+-- ============================================================
+-- FILE: migrations/015_fix_auth_trigger.sql (backfill portion)
+-- The function/trigger fix is already applied inline above; this backfills
+-- mirror rows for auth users created while the trigger was broken.
+-- ============================================================
+INSERT INTO public.users (id, email, role)
+SELECT au.id, au.email, 'consumer'
+FROM auth.users au
+LEFT JOIN public.users pu ON pu.id = au.id
+WHERE pu.id IS NULL
+  AND au.email IS NOT NULL
+ON CONFLICT (id) DO NOTHING;
