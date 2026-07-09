@@ -1,5 +1,6 @@
 'use server';
 
+import { randomBytes } from 'crypto';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import {
   createPaymentIntent,
@@ -8,8 +9,39 @@ import {
   isStripeDevMode,
 } from '@/lib/stripe';
 import { inngest } from '@/inngest/client';
-import { fireDispatch } from '@/lib/dispatch-events';
+import { getDeliveryMode, getDeliveryProvider } from '@/lib/delivery';
+import { initiateFulfillment, quoteForOrder } from '@/lib/delivery/initiate';
 import { redirect } from 'next/navigation';
+
+export type FulfillmentMethod = 'delivery' | 'pickup';
+
+// Unambiguous 6-char handoff code (no 0/O/1/I).
+function generatePickupCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from(randomBytes(6), b => alphabet[b % alphabet.length]).join('');
+}
+
+export type DeliveryQuoteResult =
+  | { success: true; feeCents: number; etaMinutes: number; expiresAt: string }
+  | { success: false; error: string };
+
+// Checkout-time delivery quote for the fulfillment chooser. Quotes expire in
+// ~15 minutes, so this is called when the consumer opens the chooser — never
+// at listing time.
+export async function getDeliveryQuote(listingId: string): Promise<DeliveryQuoteResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
+
+  const quote = await quoteForOrder(listingId, user.id);
+  if ('error' in quote) return { success: false, error: quote.error };
+  return {
+    success: true,
+    feeCents: quote.feeCents,
+    etaMinutes: quote.etaMinutes,
+    expiresAt: quote.expiresAt,
+  };
+}
 
 export type ClaimResult =
   | {
@@ -23,7 +55,10 @@ export type ClaimResult =
     }
   | { success: false; error: string };
 
-export async function claimListing(listingId: string): Promise<ClaimResult> {
+export async function claimListing(
+  listingId: string,
+  fulfillment: FulfillmentMethod = 'delivery'
+): Promise<ClaimResult> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -46,16 +81,41 @@ export async function claimListing(listingId: string): Promise<ClaimResult> {
     return { success: false, error: 'LISTING_UNAVAILABLE' };
   }
 
+  // Amount depends on fulfillment. Listing prices historically bake in the
+  // legacy flat courier fee — strip it out and add the real cost instead:
+  //   pickup   → food + platform fee (free handoff at the donor)
+  //   delivery → food + platform fee + provider quote, passed through at cost
+  // DELIVERY_MODE=internal keeps the legacy all-inclusive price + fleet.
+  const internalMode = getDeliveryMode() === 'internal';
+  const baseCents = listing.consumer_price_cents - listing.courier_fee_cents;
+  let amountCents = listing.consumer_price_cents;
+  let deliveryFeeCents: number | null = null;
+
+  if (!internalMode) {
+    if (fulfillment === 'pickup') {
+      amountCents = baseCents;
+    } else {
+      const quote = await quoteForOrder(listingId, user.id);
+      if ('error' in quote) {
+        // No deliverable quote (e.g. unvalidated address in real mode) —
+        // the consumer can still pick up.
+        return { success: false, error: 'DELIVERY_UNAVAILABLE' };
+      }
+      deliveryFeeCents = quote.feeCents;
+      amountCents = baseCents + quote.feeCents;
+    }
+  }
+
   // Create the PaymentIntent first so claim_listing can store its id.
   // Metadata gets the real order_id attached right after the claim succeeds.
   let paymentIntent;
   try {
     paymentIntent = await createPaymentIntent({
-      amountCents: listing.consumer_price_cents,
+      amountCents,
       listingId,
       orderId: 'pending_claim',
       donorPayoutCents: listing.donor_payout_cents,
-      courierFeeCents: listing.courier_fee_cents,
+      courierFeeCents: deliveryFeeCents ?? (internalMode ? listing.courier_fee_cents : 0),
       platformFeeCents: listing.platform_fee_cents,
     });
   } catch {
@@ -86,14 +146,31 @@ export async function claimListing(listingId: string): Promise<ClaimResult> {
     await attachOrderToPaymentIntent(paymentIntent.id, order.id);
   } catch {}
 
+  // Record fulfillment details the claim RPC doesn't know about. pickup_code
+  // is minted for pickup orders; the donor verifies it at handoff.
+  const { error: fulfillmentError } = await service
+    .from('orders')
+    .update({
+      fulfillment_method: internalMode ? 'delivery' : fulfillment,
+      delivery_fee_cents: deliveryFeeCents,
+      ...(fulfillment === 'pickup' && !internalMode ? { pickup_code: generatePickupCode() } : {}),
+      ...(fulfillment === 'delivery' && !internalMode
+        ? { delivery_provider: getDeliveryProvider().name }
+        : {}),
+    })
+    .eq('id', order.id);
+  if (fulfillmentError) {
+    console.error(`claimListing: fulfillment update failed for ${order.id}: ${fulfillmentError.message}`);
+  }
+
   if (isStripeDevMode()) {
-    // Simulated capture: record the synthetic charge and dispatch immediately
+    // Simulated capture: record the synthetic charge and start fulfillment
     await service
       .from('orders')
       .update({ stripe_charge_id: (paymentIntent.latest_charge as string) ?? null })
       .eq('id', order.id);
 
-    await fireDispatch(order.id, listingId, user.id);
+    await initiateFulfillment(order.id, listingId, user.id);
 
     return { success: true, orderId: order.id, checkout: false, clientSecret: null };
   }
@@ -150,6 +227,8 @@ export async function getOrderDetails(orderId: string) {
     .select(`
       id, status, created_at, delivered_at, dispute_window_expires_at,
       stripe_payment_intent_id, stripe_charge_id,
+      fulfillment_method, delivery_provider, delivery_external_id,
+      delivery_fee_cents, delivery_tracking_url, delivery_status, pickup_code,
       listings(
         id, detected_item, estimated_quantity_lbs, consumer_price_cents,
         image_url, handling_notes, temperature_sensitive
@@ -160,4 +239,34 @@ export async function getOrderDetails(orderId: string) {
     .single();
 
   return data;
+}
+
+// Reconcile-on-read: pull the provider's current state for an active delivery
+// so the order page never shows stale status even if a webhook was lost and
+// the cron reconciler hasn't run yet.
+export async function syncDeliveryStatus(orderId: string): Promise<void> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const service = await createServiceClient();
+  const { data: order } = await service
+    .from('orders')
+    .select('id, delivery_external_id, status')
+    .eq('id', orderId)
+    .eq('consumer_id', user.id)
+    .maybeSingle();
+
+  if (!order?.delivery_external_id) return;
+  if (order.status !== 'pending_dispatch' && order.status !== 'dispatched') return;
+
+  try {
+    const { getDeliveryProvider: getProvider } = await import('@/lib/delivery');
+    const { applyDeliveryStatus } = await import('@/lib/delivery/apply');
+    const state = await getProvider().getDelivery(order.delivery_external_id);
+    await applyDeliveryStatus(state);
+  } catch (err) {
+    // Non-fatal: the cron reconciler is the reliability backstop
+    console.error(`syncDeliveryStatus failed for ${orderId}:`, err);
+  }
 }

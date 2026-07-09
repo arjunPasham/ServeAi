@@ -1,5 +1,12 @@
 const DEV_MODE = !process.env.SMARTY_AUTH_ID;
 
+// True when addresses are being accepted without real validation (synthetic
+// Detroit coords). Callers use this to decide whether an address is safe to
+// hand to external services like a delivery provider.
+export function isSmartyDevMode(): boolean {
+  return DEV_MODE;
+}
+
 interface ValidationResult {
   valid: boolean;
   standardized?: {

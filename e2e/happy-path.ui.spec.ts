@@ -107,6 +107,10 @@ test.describe('consumer happy path', () => {
     const card = heading.locator('xpath=ancestor::div[contains(@class,"shadow-sm")][1]');
     await card.getByRole('button', { name: /Buy now/i }).click();
 
+    // Fulfillment chooser (Phase 3): pick delivery — exercises the live
+    // provider quote (SimulatedProvider in the test env) + claim path.
+    await page.getByRole('button', { name: /Delivery ·/i }).click();
+
     await page.waitForURL(/\/consumer\/orders\//, { timeout: 20000 });
     const orderId = page.url().split('/consumer/orders/')[1]?.split(/[?#]/)[0];
     expect(orderId).toBeTruthy();
@@ -121,7 +125,7 @@ test.describe('consumer happy path', () => {
     expect(['pending_dispatch', 'dispatched', 'delivered']).toContain(order?.status);
 
     // ── Status banner renders on the order page ─────────────────────────
-    await expect(page.locator('main')).toContainText(/Finding a courier|On the way|Delivered/i, {
+    await expect(page.locator('main')).toContainText(/Arranging delivery|On the way|Delivered/i, {
       timeout: 15000,
     });
   });

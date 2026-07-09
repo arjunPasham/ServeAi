@@ -5,7 +5,8 @@ import { headers } from 'next/headers';
 import { z } from 'zod';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { sendOTP, verifyOTP } from '@/lib/twilio';
-import { validateUSAddress } from '@/lib/smarty';
+import { validateUSAddress, isSmartyDevMode } from '@/lib/smarty';
+import { getDeliveryMode } from '@/lib/delivery';
 import { checkAuthIPLimit } from '@/lib/rate-limit';
 
 // Accept anything a human types ("(555) 123-4567", "555-123-4567", "+1 555…")
@@ -75,6 +76,13 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
   }
 
   const { email, password, role } = parsed.data;
+
+  // Courier self-registration is closed: deliveries run through the delivery
+  // provider (Uber Direct) unless the internal fleet is explicitly re-enabled
+  // with DELIVERY_MODE=internal. Existing courier accounts stay valid.
+  if (role === 'courier' && getDeliveryMode() !== 'internal') {
+    return { success: false, error: 'Courier registration is closed — deliveries are handled by our delivery partner.' };
+  }
 
   const phone = normalizePhone(parsed.data.phone);
   if (!phone) {
@@ -158,6 +166,9 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
       address: validatedAddress?.standardized?.deliveryLine ?? address,
       address_lat: validatedAddress?.lat ?? null,
       address_lng: validatedAddress?.lng ?? null,
+      // Only a real validator counts — dev-mode synthetic coords must never
+      // be handed to a delivery provider (delivery is gated on this flag)
+      address_validated: validatedAddress?.valid === true && !isSmartyDevMode(),
     });
     if (error) profileError = error.message;
   } else if (role === 'consumer') {
@@ -169,6 +180,7 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
       delivery_address: validatedAddress?.standardized?.deliveryLine ?? address,
       delivery_lat: validatedAddress?.lat ?? null,
       delivery_lng: validatedAddress?.lng ?? null,
+      address_validated: validatedAddress?.valid === true && !isSmartyDevMode(),
       receiving_window: DEFAULT_RECEIVING_WINDOW,
     });
     if (error) profileError = error.message;

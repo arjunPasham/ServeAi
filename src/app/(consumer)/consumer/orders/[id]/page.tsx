@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useEffect, useState, useTransition } from 'react';
-import { getOrderDetails } from '@/actions/payment';
+import { getOrderDetails, syncDeliveryStatus } from '@/actions/payment';
 import { submitPositiveFeedback, submitIssueFeedback, getSignedUploadUrl } from '@/actions/feedback';
 import { getSignedImageUrl } from '@/actions/listing';
 import { centsToDisplay } from '@/lib/pricing';
@@ -9,11 +9,17 @@ import { centsToDisplay } from '@/lib/pricing';
 type OrderDetails = Awaited<ReturnType<typeof getOrderDetails>>;
 
 const STATUS_LABEL: Record<string, string> = {
-  pending_dispatch: 'Finding a courier…',
+  pending_dispatch: 'Arranging delivery…',
   dispatched: 'On the way',
   delivered: 'Delivered',
   disputed: 'Issue reported',
   refunded: 'Refunded',
+};
+
+const DELIVERY_STATUS_LABEL: Record<string, string> = {
+  pending: 'Finding a courier near the pickup',
+  courier_assigned: 'Courier assigned — heading to pickup',
+  picked_up: 'Picked up — on the way to you',
 };
 
 export default function OrderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -54,8 +60,11 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       setLoading(false);
     });
 
-    // Poll status every 10 seconds while pending
+    // Poll status every 10 seconds while pending. syncDeliveryStatus is
+    // reconcile-on-read: it pulls the provider's live state first, so a lost
+    // webhook never leaves this page stale.
     const interval = setInterval(async () => {
+      await syncDeliveryStatus(id).catch(() => {});
       const data = await getOrderDetails(id);
       setOrder(data);
       if (data?.status === 'delivered' || data?.status === 'refunded') {
@@ -132,12 +141,41 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
               'bg-blue-50 border border-blue-200'
             }`}>
               <p className="font-semibold text-sm">
-                {STATUS_LABEL[order.status] ?? order.status}
+                {order.fulfillment_method === 'pickup' && order.status === 'pending_dispatch'
+                  ? 'Ready for pickup'
+                  : STATUS_LABEL[order.status] ?? order.status}
               </p>
-              {order.status === 'pending_dispatch' && (
-                <p className="text-xs text-gray-500 mt-1">We&apos;re finding the nearest courier</p>
-              )}
+              {order.fulfillment_method !== 'pickup' &&
+                (order.status === 'pending_dispatch' || order.status === 'dispatched') &&
+                order.delivery_status && DELIVERY_STATUS_LABEL[order.delivery_status] && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {DELIVERY_STATUS_LABEL[order.delivery_status]}
+                  </p>
+                )}
+              {order.delivery_tracking_url &&
+                order.status !== 'delivered' && order.status !== 'refunded' && (
+                  <a
+                    href={order.delivery_tracking_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-xs text-blue-700 underline mt-2"
+                  >
+                    Track your courier live →
+                  </a>
+                )}
             </div>
+
+            {/* Self-pickup: the handoff code the donor will ask for */}
+            {order.fulfillment_method === 'pickup' && order.status === 'pending_dispatch' && order.pickup_code && (
+              <div className="bg-white border border-gray-200 rounded-2xl p-5 text-center space-y-2">
+                <p className="text-sm text-gray-600">Show this code to the donor at pickup:</p>
+                <p className="text-3xl font-bold tracking-[0.3em] text-gray-900">{order.pickup_code}</p>
+                <p className="text-xs text-gray-400">
+                  The donor confirms the handoff with this code — that starts your 2-hour
+                  feedback window.
+                </p>
+              </div>
+            )}
 
             {/* Item details */}
             {listing && (

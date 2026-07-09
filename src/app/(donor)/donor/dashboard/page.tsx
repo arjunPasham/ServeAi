@@ -1,6 +1,8 @@
 import { getDonorListings } from '@/actions/listing';
+import { getDonorPendingPickups } from '@/actions/pickup';
 import { centsToDisplay } from '@/lib/pricing';
 import { SafetyWindowNotice } from '@/components/listing/SafetyWindowNotice';
+import { PickupConfirmCard } from '@/components/pickup/PickupConfirmCard';
 import Link from 'next/link';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
@@ -15,7 +17,10 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 };
 
 export default async function DonorDashboardPage() {
-  const listings = await getDonorListings();
+  const [listings, pendingPickups] = await Promise.all([
+    getDonorListings(),
+    getDonorPendingPickups(),
+  ]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -35,6 +40,15 @@ export default async function DonorDashboardPage() {
       </header>
 
       <main className="p-4 max-w-lg mx-auto space-y-3">
+        {pendingPickups.length > 0 && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold text-gray-700">Awaiting pickup</h2>
+            {pendingPickups.map(pickup => (
+              <PickupConfirmCard key={pickup.orderId} pickup={pickup} />
+            ))}
+          </section>
+        )}
+
         {listings.length === 0 ? (
           <div className="text-center py-20 space-y-4">
             <p className="text-gray-500 font-medium">You haven&apos;t posted any food yet</p>

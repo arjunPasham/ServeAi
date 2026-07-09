@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Store, ShoppingBasket, Bike, ShieldCheck, Clock, HandCoins, ArrowRight, Play } from 'lucide-react';
+import { Store, ShoppingBasket, Truck, ShieldCheck, Clock, HandCoins, ArrowRight, Play } from 'lucide-react';
 
 const ROLES = [
   {
@@ -17,9 +17,9 @@ const ROLES = [
     bg: 'bg-accent/10',
   },
   {
-    icon: Bike,
-    label: 'Couriers',
-    desc: 'Accept nearby deliveries and get paid the moment you confirm drop-off',
+    icon: Truck,
+    label: 'Pickup or delivery',
+    desc: 'Grab your order at the donor for free, or have a courier bring it to your door same-day',
     accent: 'text-courier',
     bg: 'bg-courier/10',
   },
@@ -34,7 +34,7 @@ const VALUE_PROPS = [
   {
     icon: Clock,
     title: 'Same-day, every time',
-    desc: 'Our dispatch system finds the nearest available courier the instant a listing sells, so food moves before it spoils.',
+    desc: 'The instant a listing sells, we dispatch an Uber Direct courier — or hand you a pickup code — so food moves before it spoils.',
   },
   {
     icon: HandCoins,
@@ -96,7 +96,8 @@ export default function HomePage() {
 
           <p className="text-lg text-muted-foreground max-w-lg mb-10 leading-relaxed">
             FoodLink connects donors with surplus food to consumers who need it —
-            with couriers handling same-day pickup and delivery before anything spoils.
+            picked up in person or delivered same-day by our delivery partner
+            before anything spoils.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -183,7 +184,7 @@ export default function HomePage() {
             Ready to rescue food in your community?
           </h2>
           <p className="text-primary-foreground/80 mb-8 max-w-md mx-auto relative">
-            Sign up as a donor, consumer, or courier — it takes about a minute.
+            Sign up as a donor or consumer — it takes about a minute.
           </p>
           <Link
             href="/register"

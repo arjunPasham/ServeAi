@@ -43,7 +43,8 @@ filename order**, then the seed:
 6. `014_connect_onboarding.sql` (Stripe Connect Express onboarding — `stripe_account_id`/`payouts_enabled` columns)
 7. `015_fix_auth_trigger.sql` (**P0** — pins `search_path` in `handle_new_auth_user` so registration creates the `public.users` mirror row; backfills rows missed while broken. Verify with `node scripts/verify-auth-trigger.cjs`.)
 8. `016_feedback_implicit_accept_unique.sql` (partial unique index — makes the dispute-window implicit-accept insert race-proof)
-9. `seed.sql` (USDA prices — `supabase/seed.sql`)
+9. `017_delivery_providers.sql` (Uber Direct + self-pickup: `fulfillment_method`, provider tracking columns, `confirm_pickup`/`confirm_provider_delivery` RPCs, `address_validated` flags)
+10. `seed.sql` (USDA prices — `supabase/seed.sql`)
 
 > ⚠️ `supabase/combined_migrations.sql` was generated from 001–013 only — it
 > does **not** include `014_connect_onboarding.sql`. If you bootstrapped the
@@ -68,21 +69,44 @@ npx inngest-cli@latest dev
 
 Open http://localhost:3000. The Inngest dev UI is at http://localhost:8288.
 
-## 5. Demo script (3 browsers / profiles)
+## 5. Demo script (2 browsers / profiles)
 
-1. **Courier** — register as Courier (check the insulated-transport box), verify with
-   OTP `000000`, toggle **online**, allow location access.
-2. **Donor** — register as Donor with a business name + address, verify phone, then
+1. **Donor** — register as Donor with a business name + address, verify phone, then
    **Post food** → scan a photo (or manual entry) → accept AI price → attest → publish.
    Tip: use *Prepared Hot Food* at 3+ lbs; very cheap categories (eggs, grain) at small
    quantities can't satisfy the 30%-below-retail floor once fixed fees are added.
-3. **Consumer** — register as Consumer with a delivery address, browse, **Buy now**.
+2. **Consumer** — register as Consumer with a delivery address, browse, **Buy now** →
+   choose **Self-pickup (free)** or **Delivery** (live quoted fee).
    (Dev mode: payment simulated instantly; with Stripe keys you get a card form.)
-4. **Courier** — a dispatch offer appears (check the server console for the dev-mode
-   push log; the offer page is `/courier/dispatch/<orderId>`). Accept → addresses appear
-   on the dashboard → **Confirm delivery**.
+3. **Pickup path** — the consumer's order page shows a 6-character handoff code; the
+   donor's dashboard shows an *Awaiting pickup* card. Enter the code → **Confirm
+   handoff** → order flips to *Delivered*.
+4. **Delivery path** — with no Uber keys, the SimulatedProvider fakes the courier:
+   the reconciler (`delivery-reconcile`, every 5 min via Inngest) advances the status
+   (courier assigned → picked up → delivered over ~6 minutes); the order page also
+   reconciles on read every 10 s, so you can just watch it progress.
 5. **Consumer** — order page shows *Delivered*; the feedback card appears
    (2-hour dispute window). 30 min later the feedback push prompt fires via Inngest.
+
+> There is no courier role in the demo anymore. To resurrect the internal fleet
+> (courier registration, dispatch offers, courier payouts) set
+> `DELIVERY_MODE=internal`.
+
+### Delivery providers & liability
+
+- **Uber Direct** (set the four `UBER_*` env vars) is white-label
+  delivery-as-a-service — FoodLink keeps its own storefront; Uber supplies the
+  courier and carries courier employment/insurance liability. Sandbox
+  credentials are self-serve; production access requires Uber review + billing.
+- **Food-safety liability stays with the platform.** The safety-attestation and
+  cold-chain fields remain mandatory for delivery orders; Uber offers no
+  temperature guarantee, so temperature-sensitive orders send "insulated bag
+  recommended" in the courier handoff instructions, and any delivery still not
+  terminal when the listing's safety window closes is auto-canceled and refunded
+  by the reconciler.
+- **Fallback:** DoorDash Drive implements the same quote/create/webhook shape —
+  adding it is roughly a one-file `DeliveryProvider` implementation in
+  `src/lib/delivery/`.
 
 ## 6. Creating an admin
 

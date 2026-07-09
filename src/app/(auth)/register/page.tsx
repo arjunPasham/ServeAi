@@ -4,15 +4,17 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { registerAction } from '@/actions/auth';
-import { Store, ShoppingBasket, Bike, Eye, EyeOff, ChevronLeft, type LucideIcon } from 'lucide-react';
+import { Store, ShoppingBasket, Eye, EyeOff, ChevronLeft, type LucideIcon } from 'lucide-react';
 
-type Role = 'donor' | 'consumer' | 'courier';
+// Courier self-registration is closed — deliveries run through Uber Direct or
+// consumer self-pickup (DELIVERY_MODE gate; registerAction enforces this
+// server-side too).
+type Role = 'donor' | 'consumer';
 type Step = 'role' | 'details';
 
 const ROLES: { value: Role; label: string; description: string; icon: LucideIcon; accent: string; bg: string }[] = [
   { value: 'donor', label: 'Donor', description: 'I have surplus food to list', icon: Store, accent: 'text-primary', bg: 'bg-primary/10' },
   { value: 'consumer', label: 'Consumer / Recipient', description: 'I want to buy discounted food', icon: ShoppingBasket, accent: 'text-accent', bg: 'bg-accent/10' },
-  { value: 'courier', label: 'Courier', description: 'I want to deliver food', icon: Bike, accent: 'text-courier', bg: 'bg-courier/10' },
 ];
 
 export default function RegisterPage() {
@@ -226,19 +228,6 @@ export default function RegisterPage() {
                   />
                 </div>
               </>
-            )}
-
-            {role === 'courier' && (
-              <label className="flex items-start gap-3 cursor-pointer bg-muted/50 border border-border rounded-xl px-4 py-3">
-                <input
-                  name="insulated"
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-ring"
-                />
-                <span className="text-sm text-foreground">
-                  I have an insulated bag or cooler for temperature-sensitive deliveries
-                </span>
-              </label>
             )}
 
             <div>

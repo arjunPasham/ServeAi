@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 import { createServiceClient } from '@/lib/supabase/server';
-import { fireDispatch } from '@/lib/dispatch-events';
+import { initiateFulfillment } from '@/lib/delivery/initiate';
 
 export async function POST(req: Request) {
   const body = await req.text();
@@ -52,10 +52,12 @@ export async function POST(req: Request) {
         },
       });
 
-      // Payment captured → NOW dispatch a courier (PRD §7.3: never before).
+      // Payment captured → NOW start fulfillment (PRD §7.3: never before) —
+      // provider delivery, self-pickup notification, or (DELIVERY_MODE=
+      // internal) the legacy courier dispatch loop.
       // stripe_charge_id acts as the idempotency guard against webhook retries.
       if (order && order.status === 'pending_dispatch' && !order.stripe_charge_id) {
-        await fireDispatch(order.id, order.listing_id, order.consumer_id);
+        await initiateFulfillment(order.id, order.listing_id, order.consumer_id);
       }
       break;
     }
