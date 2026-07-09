@@ -80,3 +80,4 @@ coverage/
 .superpowers/
 .next/
 node_modules/
+N8N-BUILDER/.mcp.json
