@@ -15,8 +15,14 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => null);
-  if (!body?.playerId) {
-    return Response.json({ error: 'playerId required' }, { status: 400 });
+  const playerId = body?.playerId;
+  // OneSignal player/subscription ids are UUIDs — reject anything else so
+  // arbitrary client JSON can never land in user_metadata.
+  if (
+    typeof playerId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(playerId)
+  ) {
+    return Response.json({ error: 'playerId must be a OneSignal player id (UUID)' }, { status: 400 });
   }
 
   // Store the OneSignal player ID against this user for future targeted pushes.
@@ -25,7 +31,7 @@ export async function POST(req: Request) {
   await service.auth.admin.updateUserById(user.id, {
     user_metadata: {
       ...user.user_metadata,
-      onesignal_player_id: body.playerId,
+      onesignal_player_id: playerId,
     },
   });
 

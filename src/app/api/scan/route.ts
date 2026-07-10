@@ -10,6 +10,7 @@
 import { randomUUID } from 'crypto';
 import { scanFoodImage } from '@/services/foodVision';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { checkScanUserLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -35,6 +36,14 @@ export async function POST(req: Request): Promise<Response> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: 'Not authenticated.' }, { status: 401 });
+  }
+
+  const limit = await checkScanUserLimit(user.id);
+  if (!limit.allowed) {
+    return Response.json(
+      { error: 'Too many scans — please try again shortly.' },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfter ?? 60) } },
+    );
   }
 
   let formData: FormData;
