@@ -133,7 +133,10 @@ export default function BrowsePage() {
               id={listing.id}
               detectedItem={listing.detected_item}
               estimatedQuantityLbs={Number(listing.estimated_quantity_lbs)}
-              consumerPriceCents={listing.consumer_price_cents}
+              // Listing prices historically bake in the legacy flat courier
+              // fee — show the real item price (= the pickup total in the
+              // chooser); delivery adds its live-quoted fee on top.
+              consumerPriceCents={listing.consumer_price_cents - COURIER_FEE_CENTS}
               temperatureSensitive={listing.temperature_sensitive}
               imageUrl={listing.signedImageUrl}
               donorType={(listing.donor_type ?? 'commercial') as 'commercial' | 'residential'}
