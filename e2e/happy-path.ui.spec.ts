@@ -4,30 +4,11 @@
 // require a courier physically "arriving", which is out of scope for a
 // browser-only test) — this spec asserts the order is created and moving.
 //
-// BLOCKED on this environment: registerAction (src/actions/auth.ts) inserts
-// the role profile row (donor_profiles/consumer_profiles/courier_profiles)
-// immediately after creating the auth user, relying on the
-// handle_new_auth_user trigger (002_schema.sql, AFTER INSERT ON auth.users)
-// to have already created the matching public.users row. On this project's
-// live Supabase DB that trigger does not fire — verified directly: a fresh
-// admin.createUser() leaves public.users with zero matching rows even after
-// a 5s wait (an orphaned "trigger.probe.x91@gmail.com" auth user from
-// 2026-07-07 shows this was hit before). Real registration through /register
-// fails with "Could not create your profile. Please try again." for EVERY
-// role, not just this test — this is a pre-existing DB/infra gap outside
-// Step 15's scope (no DB DDL access available to re-create the trigger from
-// here: no Supabase CLI project link, no Postgres connection string, no
-// Management API token — only the REST/service-role key, which cannot run
-// DDL). Per the task's fallback rule for a UI flow that "proves impossible"
-// in this environment: this test is skipped with this explanation rather
-// than weakened, and happy-path.api.spec.ts covers the same state machine
-// via the RPCs directly (bypassing the broken trigger by upserting
-// public.users in the test helper, same as every other spec in this suite).
-//
-// TODO(product bug, not Step 15): once handle_new_auth_user is confirmed
-// firing on this Supabase project again (e.g. after re-running 002_schema.sql
-// with a role that has DDL rights on the `auth` schema), remove the
-// test.skip() call below to re-enable the real /register walkthrough.
+// Registration depends on the handle_new_auth_user trigger (002_schema.sql)
+// mirroring auth.users into public.users before registerAction inserts the
+// role profile row. This spec was skipped while the trigger was broken on the
+// dev project; the search_path fix restored it (verify with
+// `node scripts/verify-auth-trigger.cjs`).
 import { test, expect } from '@playwright/test';
 import {
   getServiceClient,
@@ -51,13 +32,6 @@ test.describe('consumer happy path', () => {
   });
 
   test('register as consumer, verify phone, browse, and claim a live listing', async ({ page }) => {
-    test.skip(
-      true,
-      'BLOCKED: handle_new_auth_user trigger is not firing on this Supabase project — ' +
-        'real /register fails profile creation for every role (see comment above). ' +
-        'happy-path.api.spec.ts covers the same state machine at the RPC level.'
-    );
-
     const service = getServiceClient();
 
     // Seed a donor + live listing ahead of time (the donor-side flow is
