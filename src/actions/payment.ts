@@ -245,7 +245,7 @@ export async function getOrderDetails(orderId: string) {
       delivery_fee_cents, delivery_tracking_url, delivery_status, pickup_code,
       listings(
         id, detected_item, estimated_quantity_lbs, consumer_price_cents,
-        image_url, handling_notes, temperature_sensitive
+        courier_fee_cents, image_url, handling_notes, temperature_sensitive
       )
     `)
     .eq('id', orderId)

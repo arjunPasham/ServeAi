@@ -36,10 +36,24 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
     detected_item: string;
     estimated_quantity_lbs: number;
     consumer_price_cents: number;
+    courier_fee_cents: number;
     image_url: string | null;
     handling_notes: string | null;
     temperature_sensitive: boolean;
   } | null;
+
+  // What the consumer actually paid. Listing prices bake in the legacy flat
+  // courier fee; pickup/provider orders were charged the base item price plus
+  // the live-quoted delivery fee (if any). Legacy internal-mode orders
+  // (delivery with no provider) were charged the all-inclusive listing price.
+  const itemPriceCents = listing ? listing.consumer_price_cents - listing.courier_fee_cents : 0;
+  const isProviderPriced =
+    order?.fulfillment_method === 'pickup' || Boolean(order?.delivery_provider);
+  const paidCents = !listing
+    ? 0
+    : isProviderPriced
+      ? itemPriceCents + (order?.delivery_fee_cents ?? 0)
+      : listing.consumer_price_cents;
 
   // Direct URLs render as-is; storage keys need a signed URL fetched on the server.
   const rawImageUrl = listing?.image_url ?? null;
@@ -104,10 +118,18 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
         const urlData = await getSignedUploadUrl(id, file.name);
         if (!urlData) { setError('Upload failed'); return; }
 
-        await fetch(urlData.signedUrl, { method: 'PUT', body: file });
+        // The photo is the dispute evidence — never file the report unless it
+        // actually landed in storage.
+        const uploadRes = await fetch(urlData.signedUrl, { method: 'PUT', body: file });
+        if (!uploadRes.ok) {
+          setError('Photo upload failed — please try again.');
+          return;
+        }
         const result = await submitIssueFeedback(id, urlData.path);
         if (result.success) setFeedbackSent(true);
         else setError(FEEDBACK_ERROR_LABEL[result.error] ?? 'Failed to submit issue report');
+      } catch {
+        setError('Photo upload failed — please try again.');
       } finally {
         setUploadingPhoto(false);
       }
@@ -188,7 +210,14 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
                     <h2 className="font-semibold text-gray-900">{listing.detected_item}</h2>
                     <p className="text-sm text-gray-500">{listing.estimated_quantity_lbs} lbs</p>
                   </div>
-                  <span className="font-bold text-green-600">{centsToDisplay(listing.consumer_price_cents)}</span>
+                  <div className="text-right">
+                    <span className="font-bold text-green-600">{centsToDisplay(paidCents)}</span>
+                    {isProviderPriced && (order?.delivery_fee_cents ?? 0) > 0 && (
+                      <p className="text-[11px] text-gray-400">
+                        incl. {centsToDisplay(order?.delivery_fee_cents ?? 0)} delivery
+                      </p>
+                    )}
+                  </div>
                 </div>
                 {listing.handling_notes && (
                   <p className="text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
