@@ -86,6 +86,27 @@ export async function cancelPaymentIntent(paymentIntentId: string): Promise<void
   await getStripe().paymentIntents.cancel(paymentIntentId);
 }
 
+// Cancel a PI that may be racing a successful payment (the claim-expiry
+// watchdog vs the payment_intent.succeeded webhook). Returns whether the money
+// hold is actually released — a PI that already succeeded cannot be canceled,
+// and the caller must NOT treat the order as abandoned in that case.
+export async function cancelPaymentIntentIfCancelable(
+  paymentIntentId: string
+): Promise<{ canceled: boolean; status: string }> {
+  if (isStripeDevMode()) {
+    console.log(`[DEV] Simulated cancel of PaymentIntent ${paymentIntentId}`);
+    return { canceled: true, status: 'canceled' };
+  }
+  const stripeClient = getStripe();
+  try {
+    const pi = await stripeClient.paymentIntents.cancel(paymentIntentId);
+    return { canceled: true, status: pi.status };
+  } catch {
+    const pi = await stripeClient.paymentIntents.retrieve(paymentIntentId);
+    return { canceled: pi.status === 'canceled', status: pi.status };
+  }
+}
+
 // Refund a consumer. Never use reason 'fraudulent' for operational refunds —
 // it flags the customer in Stripe Radar and can get their card blocked.
 export async function refundOrderPayment(params: {

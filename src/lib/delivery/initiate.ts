@@ -168,7 +168,11 @@ export async function initiateFulfillment(
       pickupInstructions: [ctx.handlingNotes, coldChainNote].filter(Boolean).join(' ') || null,
     });
 
-    const { error: updateError } = await service
+    // Conditional update (same shape as the connect-onboarding race fix):
+    // concurrent webhook retries can both reach createDelivery, so only the
+    // writer that finds delivery_external_id still null keeps its delivery —
+    // the loser cancels the duplicate it just created.
+    const { data: updated, error: updateError } = await service
       .from('orders')
       .update({
         delivery_provider: provider.name,
@@ -176,9 +180,16 @@ export async function initiateFulfillment(
         delivery_tracking_url: creation.trackingUrl,
         delivery_status: 'pending',
       })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .is('delivery_external_id', null)
+      .select('id');
     if (updateError) {
       throw new Error(`initiateFulfillment: order update failed for ${orderId}: ${updateError.message}`);
+    }
+    if (!updated?.length) {
+      console.warn(`initiateFulfillment: concurrent delivery creation for ${orderId} — canceling duplicate ${creation.deliveryId}`);
+      await provider.cancel(creation.deliveryId);
+      return;
     }
 
     await service.from('audit_log').insert({
@@ -204,10 +215,14 @@ export async function initiateFulfillment(
       reason: 'delivery_creation_failed',
     });
     await service.from('orders').update({ status: 'refunded' }).eq('id', orderId).eq('status', 'pending_dispatch');
-    await service.rpc('revert_listing_to_live', {
+    const { error: revertError } = await service.rpc('revert_listing_to_live', {
       p_listing_id: listingId,
       p_reason: 'delivery_creation_failed',
     });
+    if (revertError) {
+      // Listing may be past its safety window (hidden) — not fatal, but never silent.
+      console.error(`initiateFulfillment: revert_listing_to_live failed for ${listingId}: ${revertError.message}`);
+    }
     await service.from('audit_log').insert({
       entity_type: 'order',
       entity_id: orderId,

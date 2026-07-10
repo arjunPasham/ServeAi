@@ -31,29 +31,41 @@ export const coldChainCheck = inngest.createFunction(
     for (const listing of expiring) {
       await step.run(`hide-listing-${listing.id}`, async () => {
         const supabase = await createServiceClient();
-        await supabase.rpc('hide_expired_listing', { p_listing_id: listing.id });
+        const { error: hideError } = await supabase.rpc('hide_expired_listing', {
+          p_listing_id: listing.id,
+        });
+        if (hideError) {
+          throw new Error(`cold-chain: hide_expired_listing failed for ${listing.id}: ${hideError.message}`);
+        }
 
         // Claimed but not yet picked up: refund the consumer automatically (PRD §8.2)
         if (listing.status === 'purchased') {
           const { data: order } = await supabase
             .from('orders')
-            .select('id, status, consumer_id, stripe_payment_intent_id')
+            .select('id, status, consumer_id, stripe_payment_intent_id, delivery_external_id')
             .eq('listing_id', listing.id)
             .eq('status', 'pending_dispatch')
             .maybeSingle();
 
-          if (order) {
+          // A provider delivery is already inbound — the delivery reconciler
+          // owns this order: it cancels with the provider and the canceled
+          // transition refunds. Refunding here would mark the order refunded
+          // without ever canceling the courier dispatch.
+          if (order && !order.delivery_external_id) {
             await refundOrderPayment({
               paymentIntentId: order.stripe_payment_intent_id,
               orderId: order.id,
               reason: 'safety_window_expired',
             });
 
-            await supabase
+            const { error: orderError } = await supabase
               .from('orders')
               .update({ status: 'refunded' })
               .eq('id', order.id)
               .eq('status', 'pending_dispatch');
+            if (orderError) {
+              throw new Error(`cold-chain: order refund update failed for ${order.id}: ${orderError.message}`);
+            }
 
             await supabase.from('audit_log').insert({
               entity_type: 'order',
