@@ -104,10 +104,10 @@ export async function createTestUser(
   const id = created.user.id;
   ctx.userIds.push(id);
 
-  // NOTE: normally handle_new_auth_user() (002_schema.sql, AFTER INSERT ON
-  // auth.users) auto-creates the public.users row and this would just be an
-  // UPDATE. On this environment's live DB that trigger is not firing (see
-  // task-4-report.md) — upsert so test fixtures aren't blocked by that gap.
+  // handle_new_auth_user() (015_fix_auth_trigger.sql) auto-creates the
+  // public.users row, so this is normally an UPDATE that fills in role/phone.
+  // Kept as an upsert so fixtures survive any future trigger regression
+  // (which is what originally motivated it — see 61a2fea8).
   const { error: upsertErr } = await service
     .from('users')
     .upsert({ id, email, role, phone, phone_verified: true }, { onConflict: 'id' });
