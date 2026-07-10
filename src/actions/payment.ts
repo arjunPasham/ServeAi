@@ -53,11 +53,17 @@ export type ClaimResult =
       checkout: boolean;
       clientSecret: string | null;
     }
-  | { success: false; error: string };
+  // error === 'FEE_CHANGED' carries the fresh quote so the chooser can show
+  // the delta and ask the consumer to confirm before anything is charged.
+  | { success: false; error: string; newFeeCents?: number; etaMinutes?: number };
 
 export async function claimListing(
   listingId: string,
-  fulfillment: FulfillmentMethod = 'delivery'
+  fulfillment: FulfillmentMethod = 'delivery',
+  // The delivery fee the consumer saw in the chooser. Quotes expire (~15 min)
+  // and are re-fetched here at claim time — if the fresh quote differs from
+  // what was displayed, we refuse to charge and return FEE_CHANGED instead.
+  expectedFeeCents?: number
 ): Promise<ClaimResult> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -100,6 +106,14 @@ export async function claimListing(
         // No deliverable quote (e.g. unvalidated address in real mode) —
         // the consumer can still pick up.
         return { success: false, error: 'DELIVERY_UNAVAILABLE' };
+      }
+      if (typeof expectedFeeCents === 'number' && quote.feeCents !== expectedFeeCents) {
+        return {
+          success: false,
+          error: 'FEE_CHANGED',
+          newFeeCents: quote.feeCents,
+          etaMinutes: quote.etaMinutes,
+        };
       }
       deliveryFeeCents = quote.feeCents;
       amountCents = baseCents + quote.feeCents;

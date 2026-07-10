@@ -11,7 +11,9 @@ type LiveListing = Awaited<ReturnType<typeof getLiveListingsWithSignedUrls>>[num
 
 type QuoteState =
   | { state: 'loading' }
-  | { state: 'ready'; feeCents: number; etaMinutes: number }
+  // previousFeeCents is set when a claim was refused because the live quote
+  // moved — the chooser shows the delta and asks for another tap to confirm.
+  | { state: 'ready'; feeCents: number; etaMinutes: number; previousFeeCents?: number }
   | { state: 'unavailable' };
 
 export default function BrowsePage() {
@@ -48,14 +50,31 @@ export default function BrowsePage() {
   }
 
   function handleClaim(listingId: string, fulfillment: FulfillmentMethod) {
+    const listing = chooser;
+    const displayedFeeCents =
+      fulfillment === 'delivery' && quote.state === 'ready' ? quote.feeCents : undefined;
     setClaimingId(listingId);
     setChooser(null);
     setError(null);
 
     startTransition(async () => {
-      const result = await claimListing(listingId, fulfillment);
+      const result = await claimListing(listingId, fulfillment, displayedFeeCents);
 
       if (!result.success) {
+        if (result.error === 'FEE_CHANGED' && result.newFeeCents != null) {
+          // The live quote moved between display and claim — never charge a
+          // price the consumer hasn't seen. Reopen the chooser with the fresh
+          // fee and the delta; the next tap confirms at the new price.
+          setChooser(listing);
+          setQuote({
+            state: 'ready',
+            feeCents: result.newFeeCents,
+            etaMinutes: result.etaMinutes ?? 0,
+            previousFeeCents: displayedFeeCents,
+          });
+          setClaimingId(null);
+          return;
+        }
         setError(
           result.error === 'LISTING_UNAVAILABLE'
             ? 'Sorry, this listing was just claimed by someone else.'
@@ -181,6 +200,14 @@ export default function BrowsePage() {
                 </span>
               )}
             </button>
+
+            {quote.state === 'ready' && quote.previousFeeCents != null && (
+              <p className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-800">
+                The delivery fee just changed from {centsToDisplay(quote.previousFeeCents)} to{' '}
+                {centsToDisplay(quote.feeCents)}. Tap Delivery again to confirm the new price —
+                nothing has been charged.
+              </p>
+            )}
 
             <p className="text-[11px] text-gray-400 text-center">
               Delivery quotes are live and expire after ~15 minutes.
