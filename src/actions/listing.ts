@@ -82,6 +82,17 @@ export async function createDraftListing(params: {
 
   const service = await createServiceClient();
 
+  // Only donors may list food. The create_draft_listing RPC is service-role
+  // only (012), so this action is the sole entry point — enforce role here.
+  const { data: caller } = await service
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (caller?.role !== 'donor') {
+    return { success: false, error: 'NOT_A_DONOR' };
+  }
+
   // Recompute ALL pricing server-side — never trust client-submitted amounts.
   // The client's slider value is only an input; the ±25% band and 30% discount
   // floor are enforced here by clamping/blocking (PRD §7.2).
@@ -183,9 +194,11 @@ export async function publishListing(params: {
     return { success: false, error: 'SAFETY_WINDOW_EXPIRED' };
   }
 
-  // Update prepared_at and safety_expires_at before calling publish RPC
+  // Update prepared_at and safety_expires_at before calling publish RPC.
+  // A failure here must block publish: a temperature-sensitive listing that
+  // goes live without safety_expires_at is invisible to the cold-chain sweep.
   if (listing.temperature_sensitive && params.preparedAt) {
-    await service
+    const { error: safetyError } = await service
       .from('listings')
       .update({
         prepared_at: params.preparedAt,
@@ -193,6 +206,10 @@ export async function publishListing(params: {
       })
       .eq('id', params.listingId)
       .eq('status', 'draft');
+    if (safetyError) {
+      console.error(`publishListing: safety window update failed for ${params.listingId}: ${safetyError.message}`);
+      return { success: false, error: 'SERVER_ERROR' };
+    }
   }
 
   // Atomically publish via RPC (sets status='live', locks pricing, records audit)
@@ -275,35 +292,6 @@ export async function getLiveListings() {
     ...l,
     donor_type: typeByDonor.get(l.donor_id as string) ?? 'commercial',
   }));
-}
-
-export async function getListingSignedUploadUrl(
-  listingId: string,
-  filename: string
-): Promise<{ signedUrl: string; path: string } | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const service = await createServiceClient();
-
-  // Only the listing's donor may upload photos for it
-  const { data: owned } = await service
-    .from('listings')
-    .select('id')
-    .eq('id', listingId)
-    .eq('donor_id', user.id)
-    .single();
-  if (!owned) return null;
-
-  const path = `${listingId}/${filename}`;
-
-  const { data } = await service.storage
-    .from('listing-photos')
-    .createSignedUploadUrl(path);
-
-  if (!data) return null;
-  return { signedUrl: data.signedUrl, path };
 }
 
 export async function getLiveListingsWithSignedUrls(): Promise<
