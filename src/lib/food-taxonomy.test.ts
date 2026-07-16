@@ -33,11 +33,15 @@ describe('estimateLbs', () => {
   test('uses weight units directly', () => {
     expect(estimateLbs(item({ estimatedQuantity: 8, unit: 'lbs' }))).toBe(8);
     expect(estimateLbs(item({ estimatedQuantity: 2, unit: 'kg' }))).toBe(4.4);
+    expect(estimateLbs(item({ estimatedQuantity: 32, unit: 'oz' }))).toBe(2);
   });
   test('falls back to servings at 0.75 lbs each', () => {
     expect(estimateLbs(item({ estimatedQuantity: 2, unit: 'trays', estimatedServings: 12 }))).toBe(9);
   });
   test('never returns less than 0.1', () => {
     expect(estimateLbs(item({}))).toBeGreaterThanOrEqual(0.1);
+  });
+  test('applies 0.1 floor to computed weights below 0.1', () => {
+    expect(estimateLbs(item({ estimatedQuantity: 0.4, unit: 'oz' }))).toBe(0.1);
   });
 });
