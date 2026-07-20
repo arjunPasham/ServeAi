@@ -57,7 +57,11 @@ export async function getCategoriesWithValuations(): Promise<CategoryOption[]> {
     service.from('categories').select('category_key, label, temperature_sensitive, safety_window_hours, sort').order('sort'),
     service.from('valuation_table').select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from'),
   ]);
-  if (catError || valError) return [];
+  // Same reasoning as getMerchantContext/getMerchantDashboard: a DB outage
+  // must not present as "no categories" — throw so it surfaces via the error
+  // boundary instead of silently rendering an empty manifest UI.
+  if (catError) throw new Error(`getCategoriesWithValuations: categories lookup failed: ${catError.message}`);
+  if (valError) throw new Error(`getCategoriesWithValuations: valuation_table lookup failed: ${valError.message}`);
 
   const rows: ValuationRow[] = (vals ?? []).map(v => ({
     categoryKey: v.category_key,
@@ -188,11 +192,18 @@ export async function confirmManifest(params: {
     };
 
     if (item.scanItemId) {
+      // Guard against a concurrent confirm (double submit / two tabs): only
+      // rewrite items that are still unlinked and pending. If a race already
+      // linked this item to a load, this matches 0 rows (no error) and
+      // declare_load rejects the whole confirm with ITEMS_NOT_DECLARABLE —
+      // that's the authoritative gate; this just prevents dataset noise.
       const { error } = await service
         .from('scan_items')
         .update(fields)
         .eq('id', item.scanItemId)
-        .eq('scan_record_id', params.scanRecordId);
+        .eq('scan_record_id', params.scanRecordId)
+        .is('load_id', null)
+        .eq('disposition', 'pending');
       if (error) return { success: false, error: 'SERVER_ERROR' };
       confirmedIds.push(item.scanItemId);
     } else {

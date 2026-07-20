@@ -72,6 +72,8 @@ export async function persistScanResult(
       };
     });
 
+    // Assumes a single multi-row INSERT ... RETURNING preserves input order:
+    // callers (e.g. /api/scan) map these ids back onto `result.items` by index.
     const { data: inserted, error: itemsError } = await service
       .from('scan_items')
       .insert(rows)

@@ -184,7 +184,7 @@ export default function HomePage() {
             Ready to rescue food in your community?
           </h2>
           <p className="text-primary-foreground/80 mb-8 max-w-md mx-auto relative">
-            Sign up as a donor or consumer — it takes about a minute.
+            Sign up as a merchant — it takes about a minute.
           </p>
           <Link
             href="/register"

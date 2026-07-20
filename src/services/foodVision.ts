@@ -134,7 +134,8 @@ function safeFailure(notes: string): FoodScanResult {
 // result instead of calling the model. Mirrors the twilio.ts/stripe.ts pattern
 // so `npm run dev` (and the E2E suite) works with zero Gemini quota spent.
 // Filenames containing "lowconf" simulate a low-confidence scan that must be
-// routed through the FoodScanner correction UI before a listing can publish.
+// routed through the manifest editor for merchant correction before a load
+// can be declared.
 function devModeScanResult(filename?: string): FoodScanResult {
   const isLowConfidence = (filename ?? '').toLowerCase().includes('lowconf');
 
