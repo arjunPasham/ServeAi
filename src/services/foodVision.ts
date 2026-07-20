@@ -12,7 +12,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { FOOD_CATEGORIES, type FoodItem, type FoodScanResult } from "@/types/food";
 
 /** Model id — kept in one place so it is trivial to swap. */
-const MODEL = "gemini-2.5-flash";
+export const MODEL = "gemini-2.5-flash";
 
 // --- Review thresholds (named so the policy is obvious and tunable) ---------
 /** Flag for review if the overall confidence drops below this. */

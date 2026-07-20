@@ -53,10 +53,12 @@ export interface TestContext {
   userIds: string[];
   listingIds: string[];
   orderIds: string[];
+  merchantIds: string[];
+  scanRecordIds: string[];
 }
 
 export function newContext(prefix: string): TestContext {
-  return { runId: newRunId(prefix), userIds: [], listingIds: [], orderIds: [] };
+  return { runId: newRunId(prefix), userIds: [], listingIds: [], orderIds: [], merchantIds: [], scanRecordIds: [] };
 }
 
 // +1 313 XXX XXXX — Detroit area code plus 7 varying digits derived from the
@@ -150,6 +152,83 @@ export async function createTestUser(
   }
 
   return { id, email, phone };
+}
+
+/** Creates a merchants row for an existing (donor-role) user. Phase 1 pivot. */
+export async function createMerchant(
+  ctx: TestContext,
+  userId: string,
+  opts?: { businessName?: string }
+): Promise<{ merchantId: string }> {
+  const service = getServiceClient();
+  const { data, error } = await service
+    .from('merchants')
+    .insert({
+      user_id: userId,
+      business_name: opts?.businessName ?? `E2E Merchant ${ctx.runId}`,
+      address: '1 Woodward Ave, Detroit, MI 48226',
+      address_lat: DETROIT_LAT,
+      address_lng: DETROIT_LNG,
+    })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`createMerchant: ${error?.message}`);
+  ctx.merchantIds.push(data.id);
+  return { merchantId: data.id };
+}
+
+export interface ScanItemSeed {
+  categoryKey: string;
+  foodName: string;
+  estLbs: number;
+  confirmed?: boolean;
+  temperatureSensitive?: boolean;
+  preparedAt?: string | null;
+  safetyExpiresAt?: string | null;
+}
+
+/** Seeds a scan_records row + scan_items directly (bypassing /api/scan). */
+export async function createScanRecord(
+  ctx: TestContext,
+  params: { merchantId: string; scannedBy: string; items: ScanItemSeed[] }
+): Promise<{ scanRecordId: string; scanItemIds: string[] }> {
+  const service = getServiceClient();
+  const { data: record, error: recordError } = await service
+    .from('scan_records')
+    .insert({
+      merchant_id: params.merchantId,
+      scanned_by: params.scannedBy,
+      model_id: 'e2e-seed',
+      overall_confidence: 0.9,
+      raw_response: { items: [], seeded: ctx.runId },
+    })
+    .select('id')
+    .single();
+  if (recordError || !record) throw new Error(`createScanRecord: ${recordError?.message}`);
+  ctx.scanRecordIds.push(record.id);
+
+  const { data: items, error: itemsError } = await service
+    .from('scan_items')
+    .insert(
+      params.items.map(item => ({
+        scan_record_id: record.id,
+        category_key: item.categoryKey,
+        food_name: item.foodName,
+        est_lbs: item.estLbs,
+        ai_category_key: item.categoryKey,
+        ai_food_name: item.foodName,
+        ai_est_lbs: item.estLbs,
+        ai_confidence: 0.9,
+        merchant_confirmed: item.confirmed ?? false,
+        confirmed_at: item.confirmed ? new Date().toISOString() : null,
+        temperature_sensitive: item.temperatureSensitive ?? false,
+        prepared_at: item.preparedAt ?? null,
+        safety_expires_at: item.safetyExpiresAt ?? null,
+      }))
+    )
+    .select('id');
+  if (itemsError || !items) throw new Error(`createScanRecord items: ${itemsError?.message}`);
+  return { scanRecordId: record.id, scanItemIds: items.map(r => r.id as string) };
 }
 
 export interface LiveListingOpts {
@@ -314,6 +393,40 @@ export async function cleanup(ctx: TestContext): Promise<void> {
   if (ctx.listingIds.length) {
     await service.from('listings').delete().in('id', ctx.listingIds);
   }
+
+  // Pivot tables — sweep by merchants owned by this run's users, plus any
+  // explicitly tracked ids (mirrors the orders/listings sweep above).
+  if (ctx.userIds.length) {
+    const { data: userMerchants } = await service
+      .from('merchants')
+      .select('id')
+      .in('user_id', ctx.userIds);
+    for (const row of userMerchants ?? []) {
+      if (!ctx.merchantIds.includes(row.id)) ctx.merchantIds.push(row.id);
+    }
+  }
+  if (ctx.merchantIds.length) {
+    const { data: merchantLoads } = await service
+      .from('loads')
+      .select('id')
+      .in('merchant_id', ctx.merchantIds);
+    const loadIds = (merchantLoads ?? []).map(r => r.id as string);
+
+    const { data: merchantScans } = await service
+      .from('scan_records')
+      .select('id')
+      .in('merchant_id', ctx.merchantIds);
+    for (const row of merchantScans ?? []) {
+      if (!ctx.scanRecordIds.includes(row.id)) ctx.scanRecordIds.push(row.id);
+    }
+
+    if (loadIds.length) await service.from('load_items').delete().in('load_id', loadIds);
+    if (ctx.scanRecordIds.length) await service.from('scan_items').delete().in('scan_record_id', ctx.scanRecordIds);
+    if (loadIds.length) await service.from('loads').delete().in('id', loadIds);
+    if (ctx.scanRecordIds.length) await service.from('scan_records').delete().in('id', ctx.scanRecordIds);
+    await service.from('merchants').delete().in('id', ctx.merchantIds);
+  }
+
   for (const id of ctx.userIds) {
     try {
       await service.auth.admin.deleteUser(id);

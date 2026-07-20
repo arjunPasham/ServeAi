@@ -8,9 +8,10 @@
  */
 
 import { randomUUID } from 'crypto';
-import { scanFoodImage } from '@/services/foodVision';
+import { scanFoodImage, MODEL } from '@/services/foodVision';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { checkScanUserLimit } from '@/lib/rate-limit';
+import { persistScanResult, type PersistedScan } from '@/lib/scan-persist';
 
 export const runtime = 'nodejs';
 
@@ -36,6 +37,21 @@ export async function POST(req: Request): Promise<Response> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: 'Not authenticated.' }, { status: 401 });
+  }
+
+  // Scanning is a merchant activity, and every scan must land in the dataset
+  // (the pivot's core asset). No merchants row → no scan.
+  const service = await createServiceClient();
+  const { data: merchant, error: merchantError } = await service
+    .from('merchants')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (merchantError) {
+    return Response.json({ error: 'Could not resolve merchant account.' }, { status: 500 });
+  }
+  if (!merchant) {
+    return Response.json({ error: 'Scanning requires a merchant account.' }, { status: 403 });
   }
 
   const limit = await checkScanUserLimit(user.id);
@@ -93,7 +109,6 @@ export async function POST(req: Request): Promise<Response> {
   let imagePath: string | null = null;
   let previewUrl: string | null = null;
   try {
-    const service = await createServiceClient();
     const path = `scans/${user.id}/${randomUUID()}.${EXT_BY_TYPE[image.type] ?? 'jpg'}`;
     const { error: uploadError } = await service.storage
       .from('listing-photos')
@@ -109,9 +124,31 @@ export async function POST(req: Request): Promise<Response> {
     // Non-fatal: scan results are still useful without a hosted image
   }
 
+  // Persist the scan server-side — the client never gets a result that isn't
+  // already in the dataset. Failure here is a failed scan, not a soft warning.
+  let persisted: PersistedScan;
+  try {
+    persisted = await persistScanResult(service, {
+      merchantId: merchant.id,
+      scannedBy: user.id,
+      photoKey: imagePath,
+      modelId: process.env.GEMINI_API_KEY ? MODEL : 'dev-synthetic',
+      result,
+    });
+  } catch (err) {
+    console.error('[scan] persistence failed:', err);
+    return Response.json({ error: 'Scan could not be recorded. Please try again.' }, { status: 500 });
+  }
+
   // 422 signals "we have a result but it should not be auto-trusted".
   return Response.json(
-    { ...result, imagePath, previewUrl },
+    {
+      ...result,
+      items: result.items.map((item, i) => ({ ...item, scanItemId: persisted.scanItemIds[i] ?? null })),
+      scanRecordId: persisted.scanRecordId,
+      imagePath,
+      previewUrl,
+    },
     { status: result.needsManualReview ? 422 : 200 },
   );
 }
