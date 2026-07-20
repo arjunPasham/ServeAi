@@ -113,6 +113,39 @@ Also provide an overallConfidence in [0,1] for the whole scan, a
 needsManualReview boolean, and short notes explaining your reasoning or any
 uncertainty. Respond ONLY with JSON matching the provided schema.`;
 
+// --- Retry policy for transient capacity errors -----------------------------
+/** Retries after the initial attempt when Gemini returns 503/UNAVAILABLE. */
+const MAX_CAPACITY_RETRIES = 2;
+/** Attempt N (0-based) waits (N+1) * this before retrying: 1s, then 2s. */
+const RETRY_BASE_DELAY_MS = 1000;
+
+/** True when an error looks like a transient Gemini capacity error. */
+function isCapacityError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  return status === 503 || message.includes('UNAVAILABLE') || message.includes('high demand');
+}
+
+/**
+ * Run `fn`, retrying only on capacity errors with linear backoff. Any other
+ * error (or exhausted retries) is rethrown for the caller's fallback path.
+ */
+async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isCapacityError(err) || attempt >= MAX_CAPACITY_RETRIES) throw err;
+      const delayMs = RETRY_BASE_DELAY_MS * (attempt + 1);
+      console.warn(
+        `[foodVision] Gemini capacity error (attempt ${attempt + 1}/${MAX_CAPACITY_RETRIES + 1}); retrying in ${delayMs}ms`,
+        { message: err instanceof Error ? err.message : String(err) },
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 /** Clamp any number into [0,1]; non-finite input becomes 0. */
 function clamp01(n: unknown): number {
   const x = typeof n === "number" ? n : Number(n);
@@ -202,22 +235,24 @@ export async function scanFoodImage(
   try {
     const ai = getClient();
 
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: SYSTEM_PROMPT },
-            { inlineData: { mimeType, data: imageBase64 } },
-          ],
+    const response = await retryWithBackoff(() =>
+      ai.models.generateContent({
+        model: MODEL,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: SYSTEM_PROMPT },
+              { inlineData: { mimeType, data: imageBase64 } },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
         },
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-      },
-    });
+      }),
+    );
 
     const text = response.text;
     if (!text) {
@@ -269,6 +304,12 @@ export async function scanFoodImage(
     return { items, overallConfidence, needsManualReview, notes };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Surface failures in server logs, not only in the persisted notes.
+    if (isCapacityError(err)) {
+      console.warn("[foodVision] Gemini capacity exhausted after retries", { message });
+    } else {
+      console.error("[foodVision] scan failed", err);
+    }
     return safeFailure(`Scan failed: ${message}`);
   }
 }
