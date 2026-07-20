@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { LocalDateTime } from '@/components/LocalDateTime';
 
 async function checkAdmin() {
   const supabase = await createClient();
@@ -141,7 +142,7 @@ export default async function AdminDashboardPage() {
                       <td className="px-4 py-3 text-right text-gray-700">${Number(commodity.price_per_lb).toFixed(4)}</td>
                       <td className="px-4 py-3 text-right text-gray-700">${Number(commodity.retail_benchmark_per_lb).toFixed(4)}</td>
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
-                        {new Date(commodity.updated_at).toLocaleDateString()}
+                        <LocalDateTime iso={commodity.updated_at} variant="date" />
                       </td>
                       <td className="px-4 py-3">
                         <form action={updateCommodityPrice}>
@@ -260,7 +261,7 @@ export default async function AdminDashboardPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-600">{order.status}</td>
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
-                        {new Date(order.created_at).toLocaleDateString()}
+                        <LocalDateTime iso={order.created_at} variant="date" />
                       </td>
                     </tr>
                   );

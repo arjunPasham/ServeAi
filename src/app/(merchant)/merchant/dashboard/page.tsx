@@ -5,6 +5,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getMerchantDashboard } from '@/actions/manifest';
+import { LocalDateTime } from '@/components/LocalDateTime';
 
 function centsToDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -75,7 +76,7 @@ export default async function MerchantDashboardPage() {
                 </div>
                 {load.earliest_safety_expires_at && (
                   <p className="text-xs text-amber-700">
-                    Earliest safety expiry: {new Date(load.earliest_safety_expires_at).toLocaleTimeString()}
+                    Earliest safety expiry: <LocalDateTime iso={load.earliest_safety_expires_at} />
                   </p>
                 )}
               </div>

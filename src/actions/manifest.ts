@@ -9,6 +9,8 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { requireVerifiedMerchant, type RequireVerifiedMerchantResult } from '@/lib/authz';
 import { computeSafetyExpiry } from '@/lib/safety-window';
 import { currentValuations, type ValuationRow } from '@/lib/valuation';
+import { isValidCalendarDate } from '@/lib/dates';
+import { reportError } from '@/lib/report-error';
 
 export interface ManifestItemInput {
   scanItemId: string | null; // null = merchant added an item the AI missed
@@ -83,21 +85,49 @@ export async function confirmManifest(params: {
   windowDate: string; // YYYY-MM-DD
   items: ManifestItemInput[];
 }): Promise<ConfirmManifestResult> {
+  // merchantId is unknown until authz resolves; held in a mutable field
+  // (rather than a reassigned `let`) so `fail` below can close over it while
+  // it's still `const` from ESLint's point of view.
+  const ctx: { merchantId: string | undefined } = { merchantId: undefined };
+
+  // Every failure exit in this action goes through here (review I7:
+  // confirmManifest previously had zero logging, so a 2am declare failure
+  // left no trace anywhere). Logs merchantId/scanRecordId/windowDate, the
+  // typed error code returned to the caller, and the underlying
+  // supabase/thrown error where one is present — mirrors the persist-failure
+  // log style at src/app/api/scan/route.ts. Does not change the return
+  // contract: every call site returns exactly what it returned before.
+  function fail(error: string, underlyingError?: unknown): ConfirmManifestResult {
+    const underlying =
+      underlyingError == null
+        ? undefined
+        : (underlyingError as { message?: string }).message ?? String(underlyingError);
+    reportError('[manifest] confirmManifest failed', {
+      merchantId: ctx.merchantId,
+      scanRecordId: params.scanRecordId,
+      windowDate: params.windowDate,
+      error,
+      ...(underlying !== undefined ? { underlyingError: underlying } : {}),
+    });
+    return { success: false, error };
+  }
+
   // Gate on the full invariant (authenticated + phone-verified + merchant).
   // An infra error from the guard maps to SERVER_ERROR to preserve this
   // action's typed-result contract (the guard throws on DB outage).
   let authz: RequireVerifiedMerchantResult;
   try {
     authz = await requireVerifiedMerchant();
-  } catch {
-    return { success: false, error: 'SERVER_ERROR' };
+  } catch (err) {
+    return fail('SERVER_ERROR', err);
   }
-  if (!authz.ok) return { success: false, error: authz.error };
+  if (!authz.ok) return fail(authz.error);
   const merchantId = authz.merchant.merchantId;
+  ctx.merchantId = merchantId;
 
-  if (!params.items.length) return { success: false, error: 'EMPTY_MANIFEST' };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.windowDate) || Number.isNaN(Date.parse(params.windowDate))) {
-    return { success: false, error: 'INVALID_WINDOW_DATE' };
+  if (!params.items.length) return fail('EMPTY_MANIFEST');
+  if (!isValidCalendarDate(params.windowDate)) {
+    return fail('INVALID_WINDOW_DATE');
   }
 
   const service = await createServiceClient();
@@ -108,8 +138,8 @@ export async function confirmManifest(params: {
     .eq('id', params.scanRecordId)
     .eq('merchant_id', merchantId)
     .maybeSingle();
-  if (scanRecordError) return { success: false, error: 'SERVER_ERROR' };
-  if (!scanRecord) return { success: false, error: 'SCAN_NOT_FOUND' };
+  if (scanRecordError) return fail('SERVER_ERROR', scanRecordError);
+  if (!scanRecord) return fail('SCAN_NOT_FOUND');
 
   // Category lookup (also validates every key)
   const keys = [...new Set(params.items.map(i => i.categoryKey))];
@@ -117,12 +147,12 @@ export async function confirmManifest(params: {
     .from('categories')
     .select('category_key, temperature_sensitive, safety_window_hours')
     .in('category_key', keys);
-  if (catError) return { success: false, error: 'SERVER_ERROR' };
+  if (catError) return fail('SERVER_ERROR', catError);
   const catByKey = new Map((cats ?? []).map(c => [c.category_key as string, c]));
   for (const item of params.items) {
-    if (!catByKey.has(item.categoryKey)) return { success: false, error: 'UNKNOWN_CATEGORY' };
-    if (!item.foodName.trim()) return { success: false, error: 'FOOD_NAME_REQUIRED' };
-    if (!(item.estLbs > 0)) return { success: false, error: 'INVALID_QUANTITY' };
+    if (!catByKey.has(item.categoryKey)) return fail('UNKNOWN_CATEGORY');
+    if (!item.foodName.trim()) return fail('FOOD_NAME_REQUIRED');
+    if (!(item.estLbs > 0)) return fail('INVALID_QUANTITY');
   }
 
   // Pre-flight valuation check, before any write. declare_load's own
@@ -136,7 +166,7 @@ export async function confirmManifest(params: {
     .from('valuation_table')
     .select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from')
     .in('category_key', keys);
-  if (valError) return { success: false, error: 'SERVER_ERROR' };
+  if (valError) return fail('SERVER_ERROR', valError);
   const currentVals = currentValuations(
     (valRows ?? []).map((v): ValuationRow => ({
       categoryKey: v.category_key,
@@ -146,7 +176,7 @@ export async function confirmManifest(params: {
     }))
   );
   for (const key of keys) {
-    if (!currentVals.has(key)) return { success: false, error: 'VALUATION_MISSING' };
+    if (!currentVals.has(key)) return fail('VALUATION_MISSING');
   }
 
   // Existing, still-pending items on this scan record
@@ -156,12 +186,12 @@ export async function confirmManifest(params: {
     .eq('scan_record_id', params.scanRecordId)
     .is('load_id', null)
     .eq('disposition', 'pending');
-  if (existingError) return { success: false, error: 'SERVER_ERROR' };
+  if (existingError) return fail('SERVER_ERROR', existingError);
   const existingIds = new Set((existing ?? []).map(r => r.id as string));
 
   const keptIds = params.items.filter(i => i.scanItemId).map(i => i.scanItemId as string);
   for (const id of keptIds) {
-    if (!existingIds.has(id)) return { success: false, error: 'ITEM_NOT_IN_SCAN' };
+    if (!existingIds.has(id)) return fail('ITEM_NOT_IN_SCAN');
   }
 
   const nowIso = new Date().toISOString();
@@ -173,7 +203,7 @@ export async function confirmManifest(params: {
       { temperatureSensitive: cat.temperature_sensitive, safetyWindowHours: cat.safety_window_hours },
       item.preparedAt
     );
-    if (!safety.ok) return { success: false, error: safety.error };
+    if (!safety.ok) return fail(safety.error);
 
     const fields = {
       food_name: item.foodName.trim(),
@@ -199,7 +229,7 @@ export async function confirmManifest(params: {
         .eq('scan_record_id', params.scanRecordId)
         .is('load_id', null)
         .eq('disposition', 'pending');
-      if (error) return { success: false, error: 'SERVER_ERROR' };
+      if (error) return fail('SERVER_ERROR', error);
       confirmedIds.push(item.scanItemId);
     } else {
       // Merchant-added item the AI missed — ai_* fields record that origin
@@ -213,7 +243,7 @@ export async function confirmManifest(params: {
         })
         .select('id')
         .single();
-      if (error || !added) return { success: false, error: 'SERVER_ERROR' };
+      if (error || !added) return fail('SERVER_ERROR', error);
       confirmedIds.push(added.id);
     }
   }
@@ -226,7 +256,7 @@ export async function confirmManifest(params: {
       .from('scan_items')
       .update({ disposition: 'not_shipped', disposition_at: nowIso })
       .in('id', removedIds);
-    if (error) return { success: false, error: 'SERVER_ERROR' };
+    if (error) return fail('SERVER_ERROR', error);
   }
 
   const { data: load, error: declareError } = await service.rpc('declare_load', {
@@ -237,10 +267,10 @@ export async function confirmManifest(params: {
   });
   if (declareError || !load) {
     const msg = declareError?.message ?? '';
-    if (msg.includes('ITEMS_NOT_DECLARABLE')) return { success: false, error: 'ITEMS_NOT_DECLARABLE' };
-    if (msg.includes('VALUATION_MISSING')) return { success: false, error: 'VALUATION_MISSING' };
-    if (msg.includes('EMPTY_LOAD')) return { success: false, error: 'EMPTY_MANIFEST' };
-    return { success: false, error: 'SERVER_ERROR' };
+    if (msg.includes('ITEMS_NOT_DECLARABLE')) return fail('ITEMS_NOT_DECLARABLE', declareError);
+    if (msg.includes('VALUATION_MISSING')) return fail('VALUATION_MISSING', declareError);
+    if (msg.includes('EMPTY_LOAD')) return fail('EMPTY_MANIFEST', declareError);
+    return fail('SERVER_ERROR', declareError);
   }
 
   return { success: true, loadId: load.id };
