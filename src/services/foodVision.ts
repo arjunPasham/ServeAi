@@ -166,8 +166,16 @@ function devModeScanResult(filename?: string): FoodScanResult {
         estimatedServings: 12,
         confidence: 0.93,
       },
+      {
+        foodName: 'Roast Chicken Halves',
+        category: 'Poultry',
+        estimatedQuantity: 6,
+        unit: 'lbs',
+        estimatedServings: 8,
+        confidence: 0.88,
+      },
     ],
-    overallConfidence: 0.93,
+    overallConfidence: 0.9,
     needsManualReview: false,
     notes: '[DEV MODE] Synthetic scan — GEMINI_API_KEY not set.',
   };
