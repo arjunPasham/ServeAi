@@ -40,7 +40,9 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:3000',
-    reuseExistingServer: true,
+    // Local dev keeps reuse for speed; CI always spawns its own server so the
+    // suite can never bind to a dev server holding real keys (Task 0.5, Minor).
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
       // Force every external service into its DEV_MODE fallback so the suite
