@@ -5,6 +5,7 @@ import { computePricing, PricingInput, PricingResult } from '@/lib/pricing';
 import { isTemperatureSensitive } from '@/lib/temperature-map';
 import { notifyListingPublished } from '@/services/n8n';
 import { redirect } from 'next/navigation';
+import { consumerSurfaceEnabled, consumerDisabledResult } from '@/lib/mothballed';
 
 export type PricingActionResult =
   | { success: true; pricing: PricingResult; input: PricingInput }
@@ -24,6 +25,12 @@ export async function getListingPricing(
   usdaCategory: string,
   quantityLbs: number
 ): Promise<PricingActionResult> {
+  // Named risk (Task 0.4 §3): this used the service client with no auth check
+  // at all. Gated consistently with the other pre-pivot listing reads below.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
+
   if (quantityLbs <= 0) {
     return { success: false, error: 'INVALID_QUANTITY' };
   }
@@ -72,6 +79,10 @@ export async function createDraftListing(params: {
   courierFeeCents: number;
   handlingNotes?: string;
 }): Promise<ListingActionResult> {
+  // Mothballed pre-pivot donor-listing surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -146,6 +157,10 @@ export async function publishListing(params: {
   safetyAttested: boolean;
   preparedAt?: string | null;
 }): Promise<ListingActionResult> {
+  // Mothballed pre-pivot donor-listing surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   if (!params.safetyAttested) {
     return { success: false, error: 'SAFETY_ATTESTATION_REQUIRED' };
   }
@@ -265,6 +280,14 @@ export async function getDonorListings() {
 // type is merged in with a second query. Not yet location-filtered — geo-radius
 // browse is a pending feature (needs a PostGIS RPC like get_nearest_couriers).
 export async function getLiveListings() {
+  // Previously used the service client with NO auth check at all — anyone
+  // could enumerate every live listing unauthenticated (Task 0.4 §3). Callers
+  // render a list, so an unauthenticated caller gets the same empty result
+  // the function already returns when there's no data — never a throw.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
   const service = await createServiceClient();
 
   const { data: listings } = await service
@@ -294,6 +317,9 @@ export async function getLiveListings() {
   }));
 }
 
+// Task 0.4 §3: gated by delegation — getLiveListings() above returns [] for an
+// unauthenticated caller, which Promise.all([]) below carries through as [].
+// No separate auth check needed here without duplicating the round trip.
 export async function getLiveListingsWithSignedUrls(): Promise<
   (Awaited<ReturnType<typeof getLiveListings>>[number] & { signedImageUrl: string | null })[]
 > {
