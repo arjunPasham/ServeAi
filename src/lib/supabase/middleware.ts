@@ -2,15 +2,17 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 const ROLE_DASHBOARD: Record<string, string> = {
-  donor: '/donor/dashboard',
+  donor: '/merchant/dashboard',
   consumer: '/consumer/browse',
   courier: '/courier/dashboard',
   admin: '/admin/dashboard',
 };
 
-// Which role owns each protected prefix
+// Which role owns each protected prefix. '/donor' stays mapped so the old
+// dashboard URL still authenticates before its redirect stub fires.
 const PREFIX_ROLE: Record<string, string> = {
   '/donor': 'donor',
+  '/merchant': 'donor', // merchant users keep role='donor' in Phase 1 (no auth churn)
   '/consumer': 'consumer',
   '/courier': 'courier',
   '/admin': 'admin',
@@ -25,6 +27,18 @@ export async function updateSession(request: NextRequest) {
     request.cookies.get('demo_mode')?.value === '1'
   ) {
     return NextResponse.next({ request });
+  }
+
+  // Pivot: the consumer marketplace is mothballed (ACTION_PLAN Q7). Routes
+  // stay in the codebase but are unreachable unless explicitly re-enabled.
+  if (
+    request.nextUrl.pathname.startsWith('/consumer') &&
+    process.env.NEXT_PUBLIC_CONSUMER_ENABLED !== 'true'
+  ) {
+    const homeUrl = request.nextUrl.clone();
+    homeUrl.pathname = '/';
+    homeUrl.search = '';
+    return NextResponse.redirect(homeUrl);
   }
 
   let supabaseResponse = NextResponse.next({ request });

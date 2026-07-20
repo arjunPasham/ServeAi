@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { registerAction } from '@/actions/auth';
-import { Store, ShoppingBasket, Eye, EyeOff, ChevronLeft, type LucideIcon } from 'lucide-react';
+import { Store, Eye, EyeOff, ChevronLeft, type LucideIcon } from 'lucide-react';
 
 // Courier self-registration is closed — deliveries run through Uber Direct or
 // consumer self-pickup (DELIVERY_MODE gate; registerAction enforces this
@@ -12,9 +12,11 @@ import { Store, ShoppingBasket, Eye, EyeOff, ChevronLeft, type LucideIcon } from
 type Role = 'donor' | 'consumer';
 type Step = 'role' | 'details';
 
+// Pivot: self-serve registration is merchant-only. Institutions are onboarded
+// by ops (Phase 2); the consumer marketplace is mothballed (ACTION_PLAN Q7).
+// role value stays 'donor' — the DB role enum is unchanged in Phase 1.
 const ROLES: { value: Role; label: string; description: string; icon: LucideIcon; accent: string; bg: string }[] = [
-  { value: 'donor', label: 'Donor', description: 'I have surplus food to list', icon: Store, accent: 'text-primary', bg: 'bg-primary/10' },
-  { value: 'consumer', label: 'Consumer / Recipient', description: 'I want to buy discounted food', icon: ShoppingBasket, accent: 'text-accent', bg: 'bg-accent/10' },
+  { value: 'donor', label: 'Merchant', description: 'We have surplus food to move — grocers, caterers, hotels, kitchens', icon: Store, accent: 'text-primary', bg: 'bg-primary/10' },
 ];
 
 export default function RegisterPage() {
@@ -123,12 +125,12 @@ export default function RegisterPage() {
               <RoleIcon className={`w-[18px] h-[18px] ${selectedRole.accent}`} strokeWidth={2} />
             </div>
             <h2 className="font-display text-xl text-foreground">
-              {role === 'donor' ? 'Verify your business' : 'Create your account'}
+              {role === 'donor' ? 'Set up your merchant account' : 'Create your account'}
             </h2>
           </div>
           <p className="text-sm text-muted-foreground mb-6 ml-12">
             {role === 'donor'
-              ? 'We need your food service permit to activate your account.'
+              ? 'Business name, address, and phone — surplus pickup starts after onboarding.'
               : 'Full name, email, and phone to get started.'}
           </p>
 
@@ -156,17 +158,18 @@ export default function RegisterPage() {
               <>
                 <div>
                   <label htmlFor="businessName" className="block text-sm font-medium text-foreground mb-1.5">
-                    Business name
+                    Business name <span className="text-destructive">*</span>
                   </label>
                   <input
                     id="businessName"
                     name="businessName"
                     type="text"
+                    required
                     autoComplete="organization"
                     placeholder="Restaurant or business name"
                     className="w-full border border-border bg-background rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
                   />
-                  <p className="text-xs text-muted-foreground mt-1.5">Leave blank if you&apos;re donating as a household.</p>
+                  <p className="text-xs text-muted-foreground mt-1.5">Grocers, caterers, hotels, kitchens — whoever&apos;s moving the surplus.</p>
                 </div>
                 <div>
                   <label htmlFor="licenseNumber" className="block text-sm font-medium text-foreground mb-1.5">

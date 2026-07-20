@@ -45,7 +45,7 @@ export type AuthResult = {
 
 // Single source of truth for role → dashboard routes used by all auth actions
 const ROLE_DASHBOARD: Record<string, string> = {
-  donor: '/donor/dashboard',
+  donor: '/merchant/dashboard',
   consumer: '/consumer/browse',
   courier: '/courier/dashboard',
   admin: '/admin/dashboard',
@@ -93,6 +93,12 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
   const address = parsed.data.address?.trim() ?? '';
   if ((role === 'donor' || role === 'consumer') && !address) {
     return { success: false, error: 'Address is required for this account type.' };
+  }
+
+  // Pivot: donor accounts are merchant accounts — a business name is required.
+  const merchantBusinessName = parsed.data.businessName?.trim() ?? '';
+  if (role === 'donor' && !merchantBusinessName) {
+    return { success: false, error: 'Business name is required for merchant accounts.' };
   }
 
   const service = await createServiceClient();
@@ -171,6 +177,18 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
       address_validated: validatedAddress?.valid === true && !isSmartyDevMode(),
     });
     if (error) profileError = error.message;
+
+    if (!error) {
+      const { error: merchantError } = await service.from('merchants').insert({
+        user_id: userId,
+        business_name: merchantBusinessName,
+        address: validatedAddress?.standardized?.deliveryLine ?? address,
+        address_lat: validatedAddress?.lat ?? null,
+        address_lng: validatedAddress?.lng ?? null,
+        address_validated: validatedAddress?.valid === true && !isSmartyDevMode(),
+      });
+      if (merchantError) profileError = merchantError.message;
+    }
   } else if (role === 'consumer') {
     const organizationName = parsed.data.organizationName?.trim() || null;
     const { error } = await service.from('consumer_profiles').insert({
