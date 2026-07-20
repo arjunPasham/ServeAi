@@ -154,6 +154,62 @@ export async function createTestUser(
   return { id, email, phone };
 }
 
+export interface PendingMerchant {
+  businessName: string;
+  address: string;
+  addressLat: number | null;
+  addressLng: number | null;
+  addressValidated: boolean;
+}
+
+/**
+ * Reproduces the state registerAction now leaves after the pivot's C1 fix: an
+ * auth user + public.users row that is NOT phone-verified, with the merchant
+ * provisioning payload stashed in app_metadata.pending_merchant and NO merchants
+ * row yet (that row is materialized only by verifyOTPAction after OTP success).
+ * Used to assert the "no provisioning before OTP" invariant end-to-end.
+ */
+export async function createUnverifiedMerchantRegistrant(
+  ctx: TestContext,
+  opts?: { emailLabel?: string; pending?: Partial<PendingMerchant> }
+): Promise<{ id: string; email: string; phone: string; pending: PendingMerchant }> {
+  const service = getServiceClient();
+  const label = opts?.emailLabel ?? 'unverified';
+  const email = `e2e.foodlink.${ctx.runId}.${label}@gmail.com`;
+  const phone = fakePhone();
+
+  const { data: created, error: createErr } = await service.auth.admin.createUser({
+    email,
+    password: TEST_PASSWORD,
+    email_confirm: true,
+  });
+  if (createErr || !created.user) {
+    throw new Error(`createUnverifiedMerchantRegistrant: ${createErr?.message ?? 'no user returned'}`);
+  }
+  const id = created.user.id;
+  ctx.userIds.push(id);
+
+  const { error: upsertErr } = await service
+    .from('users')
+    .upsert({ id, email, role: 'donor', phone, phone_verified: false }, { onConflict: 'id' });
+  if (upsertErr) throw new Error(`createUnverifiedMerchantRegistrant users upsert: ${upsertErr.message}`);
+
+  const pending: PendingMerchant = {
+    businessName: opts?.pending?.businessName ?? `E2E Pending Merchant ${ctx.runId}`,
+    address: opts?.pending?.address ?? '1 Woodward Ave, Detroit, MI 48226',
+    addressLat: opts?.pending?.addressLat ?? DETROIT_LAT,
+    addressLng: opts?.pending?.addressLng ?? DETROIT_LNG,
+    addressValidated: opts?.pending?.addressValidated ?? false,
+  };
+
+  const { error: metaErr } = await service.auth.admin.updateUserById(id, {
+    app_metadata: { role: 'donor', phone_verified: false, pending_merchant: pending },
+  });
+  if (metaErr) throw new Error(`createUnverifiedMerchantRegistrant app_metadata: ${metaErr.message}`);
+
+  return { id, email, phone, pending };
+}
+
 /** Creates a merchants row for an existing (donor-role) user. Phase 1 pivot. */
 export async function createMerchant(
   ctx: TestContext,

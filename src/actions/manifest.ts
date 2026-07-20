@@ -5,7 +5,8 @@
 // declare_load RPC. All writes go through the service client; ownership is
 // enforced here (the RPC re-checks merchant ownership).
 
-import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { requireVerifiedMerchant, type RequireVerifiedMerchantResult } from '@/lib/authz';
 import { computeSafetyExpiry } from '@/lib/safety-window';
 import { currentValuations, type ValuationRow } from '@/lib/valuation';
 
@@ -31,26 +32,20 @@ export interface CategoryOption {
 }
 
 export async function getMerchantContext(): Promise<{ merchantId: string; businessName: string } | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const service = await createServiceClient();
-  const { data, error } = await service
-    .from('merchants')
-    .select('id, business_name')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  // A DB outage must surface as an error, not silently masquerade as "not a
-  // merchant" (which would send an authenticated merchant to a login/signup
-  // redirect). No repo-wide precedent for read-path error handling in
-  // null-returning getters, so throw and let the error boundary handle it.
-  if (error) throw new Error(`getMerchantContext: merchants lookup failed: ${error.message}`);
-  if (!data) return null;
-  return { merchantId: data.id, businessName: data.business_name };
+  // Authenticated + phone-verified + owns a merchants row. An authz failure
+  // returns null so the caller redirects; an infra error throws (guard).
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) return null;
+  return { merchantId: authz.merchant.merchantId, businessName: authz.merchant.businessName };
 }
 
 export async function getCategoriesWithValuations(): Promise<CategoryOption[]> {
+  // Merchant-facing read (feeds the manifest editor): gate it too. Authz
+  // failure throws — this action is only reachable from the verified-merchant
+  // scan flow, so the scan UI's catch surfacing "couldn't load" is acceptable.
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) throw new Error(`getCategoriesWithValuations: not a verified merchant (${authz.error})`);
+
   const service = await createServiceClient();
 
   const [{ data: cats, error: catError }, { data: vals, error: valError }] = await Promise.all([
@@ -88,9 +83,17 @@ export async function confirmManifest(params: {
   windowDate: string; // YYYY-MM-DD
   items: ManifestItemInput[];
 }): Promise<ConfirmManifestResult> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
+  // Gate on the full invariant (authenticated + phone-verified + merchant).
+  // An infra error from the guard maps to SERVER_ERROR to preserve this
+  // action's typed-result contract (the guard throws on DB outage).
+  let authz: RequireVerifiedMerchantResult;
+  try {
+    authz = await requireVerifiedMerchant();
+  } catch {
+    return { success: false, error: 'SERVER_ERROR' };
+  }
+  if (!authz.ok) return { success: false, error: authz.error };
+  const merchantId = authz.merchant.merchantId;
 
   if (!params.items.length) return { success: false, error: 'EMPTY_MANIFEST' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.windowDate) || Number.isNaN(Date.parse(params.windowDate))) {
@@ -99,19 +102,11 @@ export async function confirmManifest(params: {
 
   const service = await createServiceClient();
 
-  const { data: merchant, error: merchantError } = await service
-    .from('merchants')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (merchantError) return { success: false, error: 'SERVER_ERROR' };
-  if (!merchant) return { success: false, error: 'NOT_A_MERCHANT' };
-
   const { data: scanRecord, error: scanRecordError } = await service
     .from('scan_records')
     .select('id')
     .eq('id', params.scanRecordId)
-    .eq('merchant_id', merchant.id)
+    .eq('merchant_id', merchantId)
     .maybeSingle();
   if (scanRecordError) return { success: false, error: 'SERVER_ERROR' };
   if (!scanRecord) return { success: false, error: 'SCAN_NOT_FOUND' };
@@ -235,8 +230,8 @@ export async function confirmManifest(params: {
   }
 
   const { data: load, error: declareError } = await service.rpc('declare_load', {
-    p_merchant_id: merchant.id,
-    p_declared_by: user.id,
+    p_merchant_id: merchantId,
+    p_declared_by: authz.merchant.userId,
     p_window_date: params.windowDate,
     p_scan_item_ids: confirmedIds,
   });
@@ -261,26 +256,16 @@ export interface DashboardLoad {
 }
 
 export async function getMerchantDashboard(): Promise<{ businessName: string; loads: DashboardLoad[] } | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  // Authz failure returns null so the page redirects to /login; infra error
+  // throws (guard) and surfaces via the error boundary.
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) return null;
 
   const service = await createServiceClient();
-  const { data: merchant, error: merchantError } = await service
-    .from('merchants')
-    .select('id, business_name')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  // Same reasoning as getMerchantContext: a DB outage must not present as
-  // "no merchant profile" — throw so it surfaces via the error boundary
-  // instead of silently rendering an empty/wrong dashboard state.
-  if (merchantError) throw new Error(`getMerchantDashboard: merchants lookup failed: ${merchantError.message}`);
-  if (!merchant) return null;
-
   const { data: loads, error: loadsError } = await service
     .from('loads')
     .select('id, window_date, status, earliest_safety_expires_at, created_at, load_items(id, est_lbs, fmv_per_lb_cents)')
-    .eq('merchant_id', merchant.id)
+    .eq('merchant_id', authz.merchant.merchantId)
     .order('created_at', { ascending: false })
     .limit(20);
   // Worst case if unchecked: a failed loads query renders as `loads: []`,
@@ -288,7 +273,7 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
   if (loadsError) throw new Error(`getMerchantDashboard: loads lookup failed: ${loadsError.message}`);
 
   return {
-    businessName: merchant.business_name,
+    businessName: authz.merchant.businessName,
     loads: (loads ?? []) as unknown as DashboardLoad[],
   };
 }
