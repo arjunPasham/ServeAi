@@ -36,11 +36,16 @@ export async function getMerchantContext(): Promise<{ merchantId: string; busine
   if (!user) return null;
 
   const service = await createServiceClient();
-  const { data } = await service
+  const { data, error } = await service
     .from('merchants')
     .select('id, business_name')
     .eq('user_id', user.id)
     .maybeSingle();
+  // A DB outage must surface as an error, not silently masquerade as "not a
+  // merchant" (which would send an authenticated merchant to a login/signup
+  // redirect). No repo-wide precedent for read-path error handling in
+  // null-returning getters, so throw and let the error boundary handle it.
+  if (error) throw new Error(`getMerchantContext: merchants lookup failed: ${error.message}`);
   if (!data) return null;
   return { merchantId: data.id, businessName: data.business_name };
 }
@@ -90,19 +95,21 @@ export async function confirmManifest(params: {
 
   const service = await createServiceClient();
 
-  const { data: merchant } = await service
+  const { data: merchant, error: merchantError } = await service
     .from('merchants')
     .select('id')
     .eq('user_id', user.id)
     .maybeSingle();
+  if (merchantError) return { success: false, error: 'SERVER_ERROR' };
   if (!merchant) return { success: false, error: 'NOT_A_MERCHANT' };
 
-  const { data: scanRecord } = await service
+  const { data: scanRecord, error: scanRecordError } = await service
     .from('scan_records')
     .select('id')
     .eq('id', params.scanRecordId)
     .eq('merchant_id', merchant.id)
     .maybeSingle();
+  if (scanRecordError) return { success: false, error: 'SERVER_ERROR' };
   if (!scanRecord) return { success: false, error: 'SCAN_NOT_FOUND' };
 
   // Category lookup (also validates every key)
@@ -117,6 +124,30 @@ export async function confirmManifest(params: {
     if (!catByKey.has(item.categoryKey)) return { success: false, error: 'UNKNOWN_CATEGORY' };
     if (!item.foodName.trim()) return { success: false, error: 'FOOD_NAME_REQUIRED' };
     if (!(item.estLbs > 0)) return { success: false, error: 'INVALID_QUANTITY' };
+  }
+
+  // Pre-flight valuation check, before any write. declare_load's own
+  // VALUATION_MISSING check only runs after the scan_items mutations below
+  // (confirm updates, manual-item inserts, not_shipped closeouts) have already
+  // been written, so a category with no current valuation would otherwise
+  // burn those writes before the RPC rejects the declare. The UI's dropdown
+  // already filters to valued categories, but this action is directly
+  // callable, so re-check here as cheap insurance against a partial write.
+  const { data: valRows, error: valError } = await service
+    .from('valuation_table')
+    .select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from')
+    .in('category_key', keys);
+  if (valError) return { success: false, error: 'SERVER_ERROR' };
+  const currentVals = currentValuations(
+    (valRows ?? []).map((v): ValuationRow => ({
+      categoryKey: v.category_key,
+      fmvPerLbCents: v.fmv_per_lb_cents,
+      basisPerLbCents: v.basis_per_lb_cents,
+      effectiveFrom: v.effective_from,
+    }))
+  );
+  for (const key of keys) {
+    if (!currentVals.has(key)) return { success: false, error: 'VALUATION_MISSING' };
   }
 
   // Existing, still-pending items on this scan record
@@ -224,19 +255,26 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
   if (!user) return null;
 
   const service = await createServiceClient();
-  const { data: merchant } = await service
+  const { data: merchant, error: merchantError } = await service
     .from('merchants')
     .select('id, business_name')
     .eq('user_id', user.id)
     .maybeSingle();
+  // Same reasoning as getMerchantContext: a DB outage must not present as
+  // "no merchant profile" — throw so it surfaces via the error boundary
+  // instead of silently rendering an empty/wrong dashboard state.
+  if (merchantError) throw new Error(`getMerchantDashboard: merchants lookup failed: ${merchantError.message}`);
   if (!merchant) return null;
 
-  const { data: loads } = await service
+  const { data: loads, error: loadsError } = await service
     .from('loads')
     .select('id, window_date, status, earliest_safety_expires_at, created_at, load_items(id, est_lbs, fmv_per_lb_cents)')
     .eq('merchant_id', merchant.id)
     .order('created_at', { ascending: false })
     .limit(20);
+  // Worst case if unchecked: a failed loads query renders as `loads: []`,
+  // showing the merchant an empty dashboard instead of an error.
+  if (loadsError) throw new Error(`getMerchantDashboard: loads lookup failed: ${loadsError.message}`);
 
   return {
     businessName: merchant.business_name,
