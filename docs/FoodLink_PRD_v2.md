@@ -1,3 +1,8 @@
+> ⚠️ **SUPERSEDED (2026-07): This document describes the pre-pivot consumer-marketplace model.**
+> FoodLink pivoted to the institutional-first "operating system for surplus food."
+> Source of truth: the Serve AI strategy doc (TGTG / Fix info / Tab 17 sections) and `analysis/` + `PHASE_1_PLAN.md` in this repo.
+> Do **not** use this document as a build input.
+
 # FoodLink — Product Requirements Document
 
 **Version:** 2.2  
