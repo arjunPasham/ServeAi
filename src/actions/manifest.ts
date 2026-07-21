@@ -35,14 +35,6 @@ export interface CategoryOption {
   basisPerLbCents: number;
 }
 
-export async function getMerchantContext(): Promise<{ merchantId: string; businessName: string } | null> {
-  // Authenticated + phone-verified + owns a merchants row. An authz failure
-  // returns null so the caller redirects; an infra error throws (guard).
-  const authz = await requireVerifiedMerchant();
-  if (!authz.ok) return null;
-  return { merchantId: authz.merchant.merchantId, businessName: authz.merchant.businessName };
-}
-
 export async function getCategoriesWithValuations(): Promise<CategoryOption[]> {
   // Merchant-facing read (feeds the manifest editor): gate it too. Authz
   // failure throws — this action is only reachable from the verified-merchant
@@ -56,9 +48,9 @@ export async function getCategoriesWithValuations(): Promise<CategoryOption[]> {
     service.from('categories').select('category_key, label, temperature_sensitive, safety_window_hours, sort').order('sort'),
     service.from('valuation_table').select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from'),
   ]);
-  // Same reasoning as getMerchantContext/getMerchantDashboard: a DB outage
-  // must not present as "no categories" — throw so it surfaces via the error
-  // boundary instead of silently rendering an empty manifest UI.
+  // Same reasoning as getMerchantDashboard: a DB outage must not present as
+  // "no categories" — throw so it surfaces via the error boundary instead of
+  // silently rendering an empty manifest UI.
   if (catError) throw new Error(`getCategoriesWithValuations: categories lookup failed: ${catError.message}`);
   if (valError) throw new Error(`getCategoriesWithValuations: valuation_table lookup failed: ${valError.message}`);
 
@@ -213,11 +205,32 @@ export interface DashboardLoad {
   load_items: { id: string; est_lbs: number; fmv_per_lb_cents: number }[];
 }
 
-export async function getMerchantDashboard(): Promise<{ businessName: string; loads: DashboardLoad[] } | null> {
-  // Authz failure returns null so the page redirects to /login; infra error
-  // throws (guard) and surfaces via the error boundary.
+// Discriminated result (tracked-debt fix): getMerchantDashboard used to
+// return `null` for BOTH "unauthenticated" and "authenticated but no
+// merchants row", and the dashboard page did `if (!dashboard)
+// redirect('/login')` for either. A phone-verified donor-role user with no
+// merchants row (e.g. mid-provisioning, or the row was never created) hit
+// the 'not_a_merchant' case, got redirected to /login, and /login's own
+// post-auth redirect sends an already-authenticated donor straight back to
+// /merchant/dashboard — an infinite loop with no error ever surfaced. The
+// two outcomes need different destinations, so they're now distinguishable.
+export type MerchantDashboardResult =
+  | { ok: false; authz: 'unauthenticated' | 'not_a_merchant' }
+  | { ok: true; businessName: string; loads: DashboardLoad[] };
+
+export async function getMerchantDashboard(): Promise<MerchantDashboardResult> {
+  // Infra error throws (guard) and surfaces via the error boundary — same as
+  // every other authz failure mode here.
   const authz = await requireVerifiedMerchant();
-  if (!authz.ok) return null;
+  if (!authz.ok) {
+    // PHONE_NOT_VERIFIED can't reach this page in practice — middleware
+    // (src/lib/supabase/middleware.ts) already gates /merchant/* on
+    // phone_verified before the page ever renders — but if it somehow did,
+    // treating it as "not a merchant" would send an OTP-incomplete user to
+    // the no-account dead end instead of back through /login, which is what
+    // they actually need. Route it with 'unauthenticated' semantics too.
+    return { ok: false, authz: authz.error === 'NOT_A_MERCHANT' ? 'not_a_merchant' : 'unauthenticated' };
+  }
 
   const service = await createServiceClient();
   // .select<Query, Row>() is supabase-js's own escape valve for a client with
@@ -237,6 +250,7 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
   if (loadsError) throw new Error(`getMerchantDashboard: loads lookup failed: ${loadsError.message}`);
 
   return {
+    ok: true,
     businessName: authz.merchant.businessName,
     loads: loads ?? [],
   };

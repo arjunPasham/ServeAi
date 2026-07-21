@@ -55,10 +55,19 @@ export interface TestContext {
   orderIds: string[];
   merchantIds: string[];
   scanRecordIds: string[];
+  institutionIds: string[];
 }
 
 export function newContext(prefix: string): TestContext {
-  return { runId: newRunId(prefix), userIds: [], listingIds: [], orderIds: [], merchantIds: [], scanRecordIds: [] };
+  return {
+    runId: newRunId(prefix),
+    userIds: [],
+    listingIds: [],
+    orderIds: [],
+    merchantIds: [],
+    scanRecordIds: [],
+    institutionIds: [],
+  };
 }
 
 // +1 313 XXX XXXX — Detroit area code plus 7 varying digits derived from the
@@ -287,6 +296,65 @@ export async function createScanRecord(
   return { scanRecordId: record.id, scanItemIds: items.map(r => r.id as string) };
 }
 
+/**
+ * Seeds a scan record with already-confirmed items and declares it via the
+ * real declare_load RPC (Phase 1/2 pivot) — the fixture allocations.api.spec.ts
+ * needs a 'declared' load to offer. Not separately tracked on ctx: the
+ * resulting scan_records/scan_items/loads/load_items rows are all swept by
+ * cleanup()'s existing merchantIds sweep, since createMerchant already
+ * pushes merchantId onto ctx.merchantIds.
+ */
+export async function createDeclaredLoad(
+  ctx: TestContext,
+  params: { merchantId: string; scannedBy: string; items: ScanItemSeed[]; windowDate?: string }
+): Promise<{ loadId: string; scanItemIds: string[] }> {
+  const service = getServiceClient();
+  const { scanItemIds } = await createScanRecord(ctx, {
+    merchantId: params.merchantId,
+    scannedBy: params.scannedBy,
+    items: params.items.map(item => ({ ...item, confirmed: true })),
+  });
+
+  const { data: load, error } = await service.rpc('declare_load', {
+    p_merchant_id: params.merchantId,
+    p_declared_by: params.scannedBy,
+    p_window_date: params.windowDate ?? new Date().toISOString().slice(0, 10),
+    p_scan_item_ids: scanItemIds,
+  });
+  if (error || !load) throw new Error(`createDeclaredLoad: ${error?.message}`);
+  return { loadId: load.id, scanItemIds };
+}
+
+export interface InstitutionSeed {
+  orgName?: string;
+  npoVerified?: boolean;
+  demandCategoryKeys?: string[];
+  capacityLbs?: number | null;
+  status?: string;
+}
+
+/** Seeds an ops-managed institutions row (023) directly — no auth user needed (user_id stays NULL, same as a real pre-login institution). */
+export async function createInstitution(
+  ctx: TestContext,
+  opts?: InstitutionSeed
+): Promise<{ institutionId: string }> {
+  const service = getServiceClient();
+  const { data, error } = await service
+    .from('institutions')
+    .insert({
+      org_name: opts?.orgName ?? `E2E Institution ${ctx.runId}`,
+      npo_verified: opts?.npoVerified ?? true,
+      demand_category_keys: opts?.demandCategoryKeys ?? [],
+      capacity_lbs: opts?.capacityLbs ?? null,
+      status: opts?.status ?? 'active',
+    })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`createInstitution: ${error?.message}`);
+  ctx.institutionIds.push(data.id);
+  return { institutionId: data.id };
+}
+
 export interface LiveListingOpts {
   temperatureSensitive?: boolean;
   /** ISO timestamp. Only meaningful when temperatureSensitive is true. */
@@ -476,11 +544,26 @@ export async function cleanup(ctx: TestContext): Promise<void> {
       if (!ctx.scanRecordIds.includes(row.id)) ctx.scanRecordIds.push(row.id);
     }
 
+    // allocations.load_id -> loads.id has no ON DELETE clause (RESTRICT by
+    // default), so any allocation created against one of these loads
+    // (Phase 2 Task 3 — offer_load) must be cleared before the loads delete
+    // below, or that delete fails with an FK violation.
+    if (loadIds.length) await service.from('allocations').delete().in('load_id', loadIds);
     if (loadIds.length) await service.from('load_items').delete().in('load_id', loadIds);
     if (ctx.scanRecordIds.length) await service.from('scan_items').delete().in('scan_record_id', ctx.scanRecordIds);
     if (loadIds.length) await service.from('loads').delete().in('id', loadIds);
     if (ctx.scanRecordIds.length) await service.from('scan_records').delete().in('id', ctx.scanRecordIds);
     await service.from('merchants').delete().in('id', ctx.merchantIds);
+  }
+
+  // Institutions (023) are ops-managed and have no user_id tie in these
+  // fixtures (user_id stays NULL), so they're only ever swept via this
+  // explicit list. Clear any allocations referencing them first — same
+  // RESTRICT-by-default FK reasoning as above — before deleting the
+  // institution rows themselves.
+  if (ctx.institutionIds.length) {
+    await service.from('allocations').delete().in('institution_id', ctx.institutionIds);
+    await service.from('institutions').delete().in('id', ctx.institutionIds);
   }
 
   for (const id of ctx.userIds) {

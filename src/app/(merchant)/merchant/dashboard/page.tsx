@@ -23,7 +23,12 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 
 export default async function MerchantDashboardPage() {
   const dashboard = await getMerchantDashboard();
-  if (!dashboard) redirect('/login');
+  if (!dashboard.ok) {
+    // 'not_a_merchant' goes to a stable dead end, not /login — redirecting
+    // there for an already-authenticated donor just bounces straight back to
+    // this page (the redirect-loop debt fix; see getMerchantDashboard).
+    redirect(dashboard.authz === 'not_a_merchant' ? '/merchant/no-account' : '/login');
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

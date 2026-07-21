@@ -24,7 +24,7 @@ export type RequireVerifiedMerchantResult =
  * Gate a merchant-only server action or route. Returns a typed authorization
  * failure for the three "not allowed" outcomes, and THROWS on an infra error
  * (a DB outage must surface via the error boundary, never masquerade as
- * "not a merchant" — same posture as getMerchantContext).
+ * "not a merchant" — same posture as getMerchantDashboard).
  */
 export async function requireVerifiedMerchant(): Promise<RequireVerifiedMerchantResult> {
   const supabase = await createClient();
