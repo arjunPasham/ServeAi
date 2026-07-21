@@ -19,6 +19,14 @@
  * names the fail-open behavior that happens today if the var is absent.
  */
 export const REQUIRED_PROD_ENV = [
+  // Supabase connection — read with non-null assertions in
+  // src/lib/supabase/server.ts (and middleware.ts). Absent, supabase-js
+  // throws "supabaseKey is required" PER-REQUEST inside every server
+  // action / route instead of the app refusing to boot.
+  'NEXT_PUBLIC_SUPABASE_URL',
+  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+
   // Rate limiting (Upstash) — missing either var makes every limiter in
   // src/lib/rate-limit.ts report { allowed: true }: no cap on OTP sends,
   // login attempts, or Gemini-quota-spending scans (denial-of-wallet).

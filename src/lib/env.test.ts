@@ -26,6 +26,13 @@ describe('missingRequiredEnv', () => {
     expect(missing).toHaveLength(3);
   });
 
+  test('reports a missing Supabase connection var', () => {
+    const env = fullEnv();
+    delete env.SUPABASE_SERVICE_ROLE_KEY;
+
+    expect(missingRequiredEnv(env)).toEqual(['SUPABASE_SERVICE_ROLE_KEY']);
+  });
+
   test('treats an empty string as missing', () => {
     const env = fullEnv();
     env.TWILIO_VERIFY_SERVICE_SID = '';
@@ -56,6 +63,22 @@ describe('assertProductionEnv', () => {
     const message = (thrown as Error).message;
     expect(message).toContain('GEMINI_API_KEY');
     expect(message).toContain('SMARTY_AUTH_ID');
+  });
+
+  test('throws in production when a Supabase connection var is missing', () => {
+    const env = fullEnv();
+    delete env.SUPABASE_SERVICE_ROLE_KEY;
+    env.NODE_ENV = 'production';
+
+    let thrown: unknown;
+    try {
+      assertProductionEnv(env);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain('SUPABASE_SERVICE_ROLE_KEY');
   });
 
   test('does not throw in production when every required var is present', () => {
