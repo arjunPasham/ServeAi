@@ -34,6 +34,10 @@ export type DeliveryQuoteResult =
 // ~15 minutes, so this is called when the consumer opens the chooser — never
 // at listing time.
 export async function getDeliveryQuote(listingId: string): Promise<DeliveryQuoteResult> {
+  // Mothballed pre-pivot consumer-checkout surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };

@@ -5,6 +5,7 @@ import {
   createConnectAccount,
   createConnectOnboardingLink,
 } from '@/lib/stripe';
+import { consumerSurfaceEnabled, consumerDisabledResult } from '@/lib/mothballed';
 
 export type ConnectRole = 'donor' | 'courier';
 
@@ -18,6 +19,10 @@ export type StartConnectOnboardingResult =
   | { success: false; error: string };
 
 export async function startConnectOnboarding(): Promise<StartConnectOnboardingResult> {
+  // Mothballed pre-pivot consumer-checkout surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
