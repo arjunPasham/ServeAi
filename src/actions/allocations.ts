@@ -32,6 +32,7 @@ import {
   rankByScoreThenFewestOffers,
   computeOfferExpiry,
 } from '@/lib/match-score';
+import { inngest } from '@/inngest/client';
 
 // Server actions are HTTP endpoints callable by any authenticated user — each
 // one must verify the admin role itself; the page-level check doesn't cover them.
@@ -334,6 +335,15 @@ export async function offerLoad(loadId: string, institutionId: string): Promise<
     if (msg.includes('INSTITUTION_NOT_ELIGIBLE')) return { success: false, error: 'INSTITUTION_NOT_ELIGIBLE' };
     if (msg.includes('ALREADY_ALLOCATED')) return { success: false, error: 'ALREADY_ALLOCATED' };
     return { success: false, error: 'SERVER_ERROR' };
+  }
+
+  // Best-effort offer notification (Task 4) — the offer already committed
+  // above via offer_load, so a send failure here must never fail the
+  // action. dev/test may have no Inngest dev server running at all.
+  try {
+    await inngest.send({ name: 'match/offered', data: { allocation_id: alloc.id } });
+  } catch (err) {
+    console.warn('[offerLoad] match/offered event send failed:', err);
   }
 
   return { success: true, allocationId: alloc.id, expiresAt: alloc.expires_at };

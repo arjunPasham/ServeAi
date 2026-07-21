@@ -19,6 +19,7 @@ let _otpIP: Ratelimit | null = null;
 let _authIP: Ratelimit | null = null;
 let _registerIP: Ratelimit | null = null;
 let _scanUser: Ratelimit | null = null;
+let _inboundView: Ratelimit | null = null;
 
 function getOtpPhoneLimit() {
   if (!_otpPhone) _otpPhone = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(5, '1 h'), prefix: 'rl:otp:phone' });
@@ -44,6 +45,14 @@ function getScanUserLimit() {
   // per session, so 20/h leaves headroom while capping abuse.
   if (!_scanUser) _scanUser = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(20, '1 h'), prefix: 'rl:scan:user' });
   return _scanUser;
+}
+function getInboundViewLimit() {
+  // The no-login /inbound/[token] view (Phase 2 Task 4) has no auth to lean
+  // on, so it's the one public read endpoint a script could hammer to enumerate
+  // tokens or scrape offers. 60/h per IP is generous for a real institution
+  // reloading/re-sharing a link a few times, while still capping abuse.
+  if (!_inboundView) _inboundView = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(60, '1 h'), prefix: 'rl:inbound:ip' });
+  return _inboundView;
 }
 
 export type RateLimitResult = { allowed: boolean; retryAfter?: number };
@@ -75,5 +84,11 @@ export async function checkRegisterIPLimit(ip: string): Promise<RateLimitResult>
 export async function checkScanUserLimit(userId: string): Promise<RateLimitResult> {
   if (DEV_MODE) { console.log('[rate-limit DEV] Scan user check skipped:', userId); return { allowed: true }; }
   const { success, reset } = await getScanUserLimit().limit(userId);
+  return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
+}
+
+export async function checkInboundViewLimit(ip: string): Promise<RateLimitResult> {
+  if (DEV_MODE) { console.log('[rate-limit DEV] Inbound view check skipped:', ip); return { allowed: true }; }
+  const { success, reset } = await getInboundViewLimit().limit(ip);
   return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
 }

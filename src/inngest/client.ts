@@ -54,4 +54,13 @@ export type FoodLinkEvents = {
       detected_item: string;
     };
   };
+  // Fired by offerLoad (src/actions/allocations.ts) once offer_load commits —
+  // triggers the institution's offer notification (Phase 2 Task 4). The
+  // offer itself already committed via the RPC before this event is sent, so
+  // notification is best-effort and must never fail the action.
+  'match/offered': {
+    data: {
+      allocation_id: string;
+    };
+  };
 };
