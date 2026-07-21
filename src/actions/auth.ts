@@ -7,7 +7,19 @@ import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { sendOTP, verifyOTP } from '@/lib/twilio';
 import { validateUSAddress, isSmartyDevMode } from '@/lib/smarty';
 import { getDeliveryMode } from '@/lib/delivery';
-import { checkAuthIPLimit } from '@/lib/rate-limit';
+import { checkAuthIPLimit, checkRegisterIPLimit } from '@/lib/rate-limit';
+
+// Merchant provisioning is deferred to phone verification (review C1): instead
+// of writing the merchants row at registration, registerAction stashes this
+// payload in the auth user's server-managed app_metadata, and verifyOTPAction
+// materializes the row only after the OTP succeeds.
+interface PendingMerchant {
+  businessName: string;
+  address: string;
+  addressLat: number | null;
+  addressLng: number | null;
+  addressValidated: boolean;
+}
 
 // Accept anything a human types ("(555) 123-4567", "555-123-4567", "+1 555…")
 // and normalize to E.164 (+1XXXXXXXXXX). Returns null if not a US number.
@@ -45,7 +57,7 @@ export type AuthResult = {
 
 // Single source of truth for role → dashboard routes used by all auth actions
 const ROLE_DASHBOARD: Record<string, string> = {
-  donor: '/donor/dashboard',
+  donor: '/merchant/dashboard',
   consumer: '/consumer/browse',
   courier: '/courier/dashboard',
   admin: '/admin/dashboard',
@@ -93,6 +105,26 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
   const address = parsed.data.address?.trim() ?? '';
   if ((role === 'donor' || role === 'consumer') && !address) {
     return { success: false, error: 'Address is required for this account type.' };
+  }
+
+  // Pivot: donor accounts are merchant accounts — a business name is required.
+  const merchantBusinessName = parsed.data.businessName?.trim() ?? '';
+  if (role === 'donor' && !merchantBusinessName) {
+    return { success: false, error: 'Business name is required for merchant accounts.' };
+  }
+
+  // Throttle by IP BEFORE any write, Smarty lookup, or OTP send. Dev mode (no
+  // Upstash) stays permissive — the 0.1-established posture; prod fails closed
+  // on missing keys, so the limiter is guaranteed real there.
+  const headerStore = await headers();
+  const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
+  const registerCheck = await checkRegisterIPLimit(ip);
+  if (!registerCheck.allowed) {
+    return {
+      success: false,
+      error: 'Too many registration attempts. Please try again later.',
+      retryAfter: registerCheck.retryAfter,
+    };
   }
 
   const service = await createServiceClient();
@@ -148,11 +180,39 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
     return { success: false, error: 'PROFILE_UPDATE_FAILED' };
   }
 
+  // Merchant accounts (role='donor') are NOT provisioned here (review C1): the
+  // merchants row is created by verifyOTPAction only after the OTP succeeds.
+  // Stash the provisioning payload in app_metadata so the OTP step can
+  // materialize it — app_metadata is server-managed and carries the same trust
+  // level the middleware relies on.
+  const pendingMerchant: PendingMerchant | null =
+    role === 'donor'
+      ? {
+          businessName: merchantBusinessName,
+          address: validatedAddress?.standardized?.deliveryLine ?? address,
+          addressLat: validatedAddress?.lat ?? null,
+          addressLng: validatedAddress?.lng ?? null,
+          // Only a real validator counts — dev-mode synthetic coords must never
+          // be treated as a validated address downstream.
+          addressValidated: validatedAddress?.valid === true && !isSmartyDevMode(),
+        }
+      : null;
+
   // Role + phone_verified live in app_metadata: users cannot modify app_metadata,
   // so the middleware can trust it (user_metadata is user-writable — never use it for auth).
-  await service.auth.admin.updateUserById(userId, {
-    app_metadata: { role, phone_verified: false },
+  // Checked: if this write fails the stash is lost, which would strand the user
+  // as verified-with-no-merchant later — so roll back rather than continue.
+  const { error: metaError } = await service.auth.admin.updateUserById(userId, {
+    app_metadata: {
+      role,
+      phone_verified: false,
+      ...(pendingMerchant ? { pending_merchant: pendingMerchant } : {}),
+    },
   });
+  if (metaError) {
+    await rollback();
+    return { success: false, error: 'PROFILE_UPDATE_FAILED' };
+  }
 
   // Create the role profile row — without this, listings/dispatch/delivery all break
   let profileError: string | null = null;
@@ -171,6 +231,8 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
       address_validated: validatedAddress?.valid === true && !isSmartyDevMode(),
     });
     if (error) profileError = error.message;
+    // The merchants row is intentionally NOT created here — verifyOTPAction
+    // materializes it from app_metadata.pending_merchant after OTP success.
   } else if (role === 'consumer') {
     const organizationName = parsed.data.organizationName?.trim() || null;
     const { error } = await service.from('consumer_profiles').insert({
@@ -205,8 +267,6 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
     return { success: false, error: 'Account created but sign-in failed. Please log in.' };
   }
 
-  const headerStore = await headers();
-  const ip = headerStore.get('x-real-ip') ?? headerStore.get('x-forwarded-for') ?? '0.0.0.0';
   const otpResult = await sendOTP(phone, ip);
   if (!otpResult.success) {
     return { success: false, error: otpResult.error };
@@ -330,15 +390,72 @@ export async function verifyOTPAction(phone: string, code: string): Promise<Auth
     return { success: false, error: result.error };
   }
 
-  await Promise.all([
-    service.from('users').update({ phone_verified: true }).eq('id', user.id),
-    // app_metadata (not user_metadata) so the flag cannot be self-granted client-side
-    service.auth.admin.updateUserById(user.id, {
-      app_metadata: { role: userRow.role, phone_verified: true },
-    }),
-  ]);
-
   const role = userRow.role ?? 'consumer';
+
+  // Materialize the merchants row from the registration stash BEFORE marking
+  // the account verified. If provisioning fails we return PROVISIONING_FAILED
+  // WITHOUT setting phone_verified, so the account stays unverified and the
+  // user simply re-verifies (loginAction routes unverified users back to
+  // /verify-phone; Twilio Verify allows a fresh code). That is strictly safer
+  // than marking verified first, which would leave a verified merchant with no
+  // merchants row and no working retry path. The upsert is idempotent
+  // (ON CONFLICT (user_id) DO NOTHING), so a retry after a partial failure —
+  // or a stale stash — resolves to success.
+  const pendingMerchant = user.app_metadata?.pending_merchant as PendingMerchant | undefined;
+  if (pendingMerchant) {
+    const { error: merchantError } = await service
+      .from('merchants')
+      .upsert(
+        {
+          user_id: user.id,
+          business_name: pendingMerchant.businessName,
+          address: pendingMerchant.address,
+          address_lat: pendingMerchant.addressLat,
+          address_lng: pendingMerchant.addressLng,
+          address_validated: pendingMerchant.addressValidated,
+        },
+        { onConflict: 'user_id', ignoreDuplicates: true },
+      );
+    if (merchantError) {
+      console.error('[verifyOTP] merchant provisioning failed:', {
+        userId: user.id,
+        error: merchantError.message,
+      });
+      return { success: false, error: 'PROVISIONING_FAILED' };
+    }
+  }
+
+  // Persist verification and clear the stash. Written SEQUENTIALLY with
+  // app_metadata first (the auth source of truth the middleware trusts) then the
+  // users column (loginAction's routing gate): if either fails we return
+  // VERIFY_PERSIST_FAILED rather than silently claiming success on a spent OTP.
+  // Ordering matters — loginAction gates on users.phone_verified, so a failure
+  // there still routes the user back to /verify-phone to retry, never into a
+  // dashboard redirect loop. app_metadata (not user_metadata) so the flag
+  // cannot be self-granted client-side.
+  const { error: metaError } = await service.auth.admin.updateUserById(user.id, {
+    app_metadata: { role, phone_verified: true, pending_merchant: null },
+  });
+  if (metaError) {
+    console.error('[verifyOTP] app_metadata verification write failed:', {
+      userId: user.id,
+      error: metaError.message,
+    });
+    return { success: false, error: 'VERIFY_PERSIST_FAILED' };
+  }
+
+  const { error: usersError } = await service
+    .from('users')
+    .update({ phone_verified: true })
+    .eq('id', user.id);
+  if (usersError) {
+    console.error('[verifyOTP] users.phone_verified write failed:', {
+      userId: user.id,
+      error: usersError.message,
+    });
+    return { success: false, error: 'VERIFY_PERSIST_FAILED' };
+  }
+
   return { success: true, redirectTo: ROLE_DASHBOARD[role] ?? '/' };
 }
 

@@ -17,6 +17,7 @@ function getRedis(): Redis {
 let _otpPhone: Ratelimit | null = null;
 let _otpIP: Ratelimit | null = null;
 let _authIP: Ratelimit | null = null;
+let _registerIP: Ratelimit | null = null;
 let _scanUser: Ratelimit | null = null;
 
 function getOtpPhoneLimit() {
@@ -30,6 +31,13 @@ function getOtpIPLimit() {
 function getAuthIPLimit() {
   if (!_authIP) _authIP = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(5, '15 m'), prefix: 'rl:auth:ip' });
   return _authIP;
+}
+function getRegisterIPLimit() {
+  // Registration provisions an auth user, spends a Smarty address lookup, and
+  // sends an OTP — so it must be throttled per-IP BEFORE any of that work runs,
+  // to stop a script rotating fresh accounts to defeat the per-user scan cap.
+  if (!_registerIP) _registerIP = new Ratelimit({ redis: getRedis(), limiter: Ratelimit.slidingWindow(5, '1 h'), prefix: 'rl:register:ip' });
+  return _registerIP;
 }
 function getScanUserLimit() {
   // Each scan spends Gemini quota; a legitimate donor lists a handful of items
@@ -55,6 +63,12 @@ export async function checkOtpIPLimit(ip: string): Promise<RateLimitResult> {
 export async function checkAuthIPLimit(ip: string): Promise<RateLimitResult> {
   if (DEV_MODE) { console.log('[rate-limit DEV] Auth IP check skipped:', ip); return { allowed: true }; }
   const { success, reset } = await getAuthIPLimit().limit(ip);
+  return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
+}
+
+export async function checkRegisterIPLimit(ip: string): Promise<RateLimitResult> {
+  if (DEV_MODE) { console.log('[rate-limit DEV] Register IP check skipped:', ip); return { allowed: true }; }
+  const { success, reset } = await getRegisterIPLimit().limit(ip);
   return { allowed: success, retryAfter: success ? undefined : Math.ceil((reset - Date.now()) / 1000) };
 }
 

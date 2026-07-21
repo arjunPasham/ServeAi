@@ -46,8 +46,17 @@ export default function MerchantScanPage() {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  async function loadCategories() {
+    try {
+      const cats = await getCategoriesWithValuations();
+      setCategories(cats);
+    } catch {
+      setState({ phase: 'error', message: "Couldn't load categories — check your connection and try again." });
+    }
+  }
+
   useEffect(() => {
-    getCategoriesWithValuations().then(setCategories);
+    loadCategories();
   }, []);
 
   async function handleFile(file: File) {
@@ -168,7 +177,10 @@ export default function MerchantScanPage() {
           <div className="text-center py-16 space-y-4">
             <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{state.message}</p>
             <button
-              onClick={() => setState({ phase: 'idle' })}
+              onClick={() => {
+                setState({ phase: 'idle' });
+                loadCategories();
+              }}
               className="min-h-[44px] border border-gray-300 hover:border-green-600 text-gray-700 font-semibold rounded-full px-8 py-3 text-sm transition-colors"
             >
               Try again

@@ -11,7 +11,7 @@ import { PricingSlider } from '@/components/listing/PricingSlider';
 import { ListingCard } from '@/components/listing/ListingCard';
 import { DispatchCard } from '@/components/dispatch/DispatchCard';
 import { computePricing, centsToDisplay } from '@/lib/pricing';
-import { estimateLbs } from '@/lib/category-map';
+import { estimateLbs } from '@/lib/food-taxonomy';
 import {
   DEMO_SCAN_RESULT,
   DEMO_SCAN_PHOTO,

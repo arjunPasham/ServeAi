@@ -9,7 +9,8 @@
 
 import { randomUUID } from 'crypto';
 import { scanFoodImage, MODEL } from '@/services/foodVision';
-import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { requireVerifiedMerchant, type RequireVerifiedMerchantResult } from '@/lib/authz';
 import { checkScanUserLimit } from '@/lib/rate-limit';
 import { persistScanResult, type PersistedScan } from '@/lib/scan-persist';
 
@@ -33,28 +34,33 @@ const EXT_BY_TYPE: Record<string, string> = {
 };
 
 export async function POST(req: Request): Promise<Response> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return Response.json({ error: 'Not authenticated.' }, { status: 401 });
-  }
-
-  // Scanning is a merchant activity, and every scan must land in the dataset
-  // (the pivot's core asset). No merchants row → no scan.
-  const service = await createServiceClient();
-  const { data: merchant, error: merchantError } = await service
-    .from('merchants')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (merchantError) {
+  // Gate on the full invariant — authenticated + phone-verified + owns a
+  // merchants row — BEFORE spending any Gemini quota (review C1). phone_verified
+  // was previously enforced only in page middleware, which never runs for this
+  // API route, so an unverified account could reach real spend.
+  let authz: RequireVerifiedMerchantResult;
+  try {
+    authz = await requireVerifiedMerchant();
+  } catch (err) {
+    console.error('[scan] merchant authz failed:', err);
     return Response.json({ error: 'Could not resolve merchant account.' }, { status: 500 });
   }
-  if (!merchant) {
+  if (!authz.ok) {
+    if (authz.error === 'NOT_AUTHENTICATED') {
+      return Response.json({ error: 'Not authenticated.' }, { status: 401 });
+    }
+    if (authz.error === 'PHONE_NOT_VERIFIED') {
+      return Response.json({ error: 'Phone verification required.' }, { status: 403 });
+    }
+    // Every scan must land in the dataset (the pivot's core asset): no merchants
+    // row → no scan.
     return Response.json({ error: 'Scanning requires a merchant account.' }, { status: 403 });
   }
+  const userId = authz.merchant.userId;
+  const merchant = { id: authz.merchant.merchantId };
+  const service = await createServiceClient();
 
-  const limit = await checkScanUserLimit(user.id);
+  const limit = await checkScanUserLimit(userId);
   if (!limit.allowed) {
     return Response.json(
       { error: 'Too many scans — please try again shortly.' },
@@ -109,7 +115,7 @@ export async function POST(req: Request): Promise<Response> {
   let imagePath: string | null = null;
   let previewUrl: string | null = null;
   try {
-    const path = `scans/${user.id}/${randomUUID()}.${EXT_BY_TYPE[image.type] ?? 'jpg'}`;
+    const path = `scans/${userId}/${randomUUID()}.${EXT_BY_TYPE[image.type] ?? 'jpg'}`;
     const { error: uploadError } = await service.storage
       .from('listing-photos')
       .upload(path, buffer, { contentType: image.type });
@@ -130,7 +136,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     persisted = await persistScanResult(service, {
       merchantId: merchant.id,
-      scannedBy: user.id,
+      scannedBy: userId,
       photoKey: imagePath,
       modelId: process.env.GEMINI_API_KEY ? MODEL : 'dev-synthetic',
       result,

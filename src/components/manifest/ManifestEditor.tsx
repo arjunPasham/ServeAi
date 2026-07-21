@@ -26,8 +26,8 @@ interface ManifestEditorProps {
 }
 
 // datetime-local has no timezone — append the local UTC offset so the server
-// parses the merchant's wall-clock time correctly (ported from the deleted
-// PricingSlider).
+// parses the merchant's wall-clock time correctly (ported from PricingSlider,
+// which is removed in Phase 3).
 function toIsoWithOffset(localDatetime: string): string {
   const date = new Date(localDatetime);
   const tzOffset = -date.getTimezoneOffset();

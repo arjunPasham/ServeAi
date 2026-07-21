@@ -7,6 +7,7 @@
 
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import { firePostDeliveryPipeline } from '@/lib/delivery/apply';
+import { consumerSurfaceEnabled, consumerDisabledResult } from '@/lib/mothballed';
 
 export type ConfirmPickupResult = { success: true } | { success: false; error: string };
 
@@ -47,6 +48,10 @@ export async function getDonorPendingPickups(): Promise<PendingPickup[]> {
 }
 
 export async function confirmPickup(orderId: string, pickupCode: string): Promise<ConfirmPickupResult> {
+  // Mothballed pre-pivot self-pickup surface (Task 0.4) — gated, not deleted.
+  // See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };

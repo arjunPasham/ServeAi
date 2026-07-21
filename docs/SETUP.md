@@ -44,7 +44,10 @@ filename order**, then the seed:
 7. `015_fix_auth_trigger.sql` (**P0** — pins `search_path` in `handle_new_auth_user` so registration creates the `public.users` mirror row; backfills rows missed while broken. Verify with `node scripts/verify-auth-trigger.cjs`.)
 8. `016_feedback_implicit_accept_unique.sql` (partial unique index — makes the dispute-window implicit-accept insert race-proof)
 9. `017_delivery_providers.sql` (Uber Direct + self-pickup: `fulfillment_method`, provider tracking columns, `confirm_pickup`/`confirm_provider_delivery` RPCs, `address_validated` flags)
-10. `seed.sql` (USDA prices — `supabase/seed.sql`)
+10. `018_categories_valuations.sql` (pivot Phase 1 — category taxonomy + versioned valuation table)
+11. `019_merchants.sql` (pivot Phase 1 — merchants entity, backfilled from donor_profiles)
+12. `020_scan_inventory.sql` (pivot Phase 1 — scan_records/scan_items/loads/load_items + `declare_load` RPC)
+13. `seed.sql` (USDA prices — legacy consumer flow only)
 
 > ⚠️ `supabase/combined_migrations.sql` was generated from 001–013 only — it
 > does **not** include `014_connect_onboarding.sql`. If you bootstrapped the
@@ -70,6 +73,10 @@ npx inngest-cli@latest dev
 Open http://localhost:3000. The Inngest dev UI is at http://localhost:8288.
 
 ## 5. Demo script (2 browsers / profiles)
+
+> **Pivot note (Phase 1):** the primary flow is now Merchant → `/merchant/scan` →
+> confirm manifest → load declared. The consumer purchase flow below is mothballed —
+> set `NEXT_PUBLIC_CONSUMER_ENABLED=true` to re-enable it for reference.
 
 1. **Donor** — register as Donor with a business name + address, verify phone, then
    **Post food** → scan a photo (or manual entry) → accept AI price → attest → publish.

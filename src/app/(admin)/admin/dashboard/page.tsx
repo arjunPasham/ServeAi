@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { LocalDateTime } from '@/components/LocalDateTime';
 
 async function checkAdmin() {
   const supabase = await createClient();
@@ -108,6 +109,18 @@ export default async function AdminDashboardPage() {
       </header>
 
       <main className="p-4 max-w-4xl mx-auto space-y-8">
+        {/* Pre-pivot notice (I4): this page predates the Phase 1 merchant pivot
+            and the price editor below is a silent no-op against the live flow.
+            Phase 2 Task 3 rebuilds this into the ops matching console. */}
+        <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Pre-pivot admin surface</p>
+          <p className="mt-1">
+            The commodity-price editor below writes <code className="font-mono text-xs">usda_commodity_prices</code>,
+            which the live merchant flow no longer reads (valuations come from <code className="font-mono text-xs">valuation_table</code>).
+            Editing here has no effect on merchant valuations or loads. The ops matching console replaces this page in Phase 2.
+          </p>
+        </div>
+
         {/* USDA Commodity Prices */}
         <section className="space-y-3">
           <h2 className="font-semibold text-gray-900">USDA Commodity Prices</h2>
@@ -141,7 +154,7 @@ export default async function AdminDashboardPage() {
                       <td className="px-4 py-3 text-right text-gray-700">${Number(commodity.price_per_lb).toFixed(4)}</td>
                       <td className="px-4 py-3 text-right text-gray-700">${Number(commodity.retail_benchmark_per_lb).toFixed(4)}</td>
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
-                        {new Date(commodity.updated_at).toLocaleDateString()}
+                        <LocalDateTime iso={commodity.updated_at} variant="date" />
                       </td>
                       <td className="px-4 py-3">
                         <form action={updateCommodityPrice}>
@@ -153,7 +166,8 @@ export default async function AdminDashboardPage() {
                               defaultValue={commodity.price_per_lb}
                               step="0.0001"
                               min="0"
-                              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs"
+                              disabled
+                              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs disabled:bg-gray-100 disabled:text-gray-400"
                             />
                             <input
                               type="number"
@@ -161,15 +175,19 @@ export default async function AdminDashboardPage() {
                               defaultValue={commodity.retail_benchmark_per_lb}
                               step="0.0001"
                               min="0"
-                              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs"
+                              disabled
+                              className="w-20 border border-gray-200 rounded px-2 py-1 text-xs disabled:bg-gray-100 disabled:text-gray-400"
                             />
                             <button
                               type="submit"
-                              className="bg-green-600 text-white text-xs font-semibold rounded px-2 py-1 hover:bg-green-700"
+                              disabled
+                              title="Disabled: pre-pivot, no effect on merchant valuations"
+                              className="bg-gray-300 text-gray-500 text-xs font-semibold rounded px-2 py-1 cursor-not-allowed"
                             >
                               Update
                             </button>
                           </div>
+                          <p className="mt-1 text-[11px] text-gray-400">Disabled — pre-pivot, no effect on merchant valuations</p>
                         </form>
                       </td>
                     </tr>
@@ -260,7 +278,7 @@ export default async function AdminDashboardPage() {
                       </td>
                       <td className="px-4 py-3 text-gray-600">{order.status}</td>
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
-                        {new Date(order.created_at).toLocaleDateString()}
+                        <LocalDateTime iso={order.created_at} variant="date" />
                       </td>
                     </tr>
                   );

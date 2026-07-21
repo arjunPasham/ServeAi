@@ -5,6 +5,11 @@ import { inngest } from '@/inngest/client';
 import { notifyDeliveryConfirmed } from '@/services/n8n';
 import { transferToCourier, canReceiveTransfers } from '@/lib/stripe';
 import { redirect } from 'next/navigation';
+import {
+  consumerSurfaceEnabled,
+  consumerDisabledResult,
+  assertConsumerSurfaceEnabled,
+} from '@/lib/mothballed';
 
 export type DispatchActionResult =
   | { success: true }
@@ -14,6 +19,10 @@ export async function acceptDispatch(
   orderId: string,
   dispatchEventId: string
 ): Promise<DispatchActionResult> {
+  // Mothballed pre-pivot courier-dispatch surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -62,6 +71,10 @@ export async function acceptDispatch(
 export async function declineDispatch(
   dispatchEventId: string
 ): Promise<DispatchActionResult> {
+  // Mothballed pre-pivot courier-dispatch surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -94,6 +107,10 @@ export async function declineDispatch(
 }
 
 export async function confirmDelivery(orderId: string): Promise<DispatchActionResult> {
+  // Mothballed pre-pivot courier-dispatch surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -339,6 +356,10 @@ export async function getCourierStatus(): Promise<{
 }
 
 export async function updateCourierLocation(lat: number, lng: number): Promise<void> {
+  // Mothballed pre-pivot courier-dispatch surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  assertConsumerSurfaceEnabled('updateCourierLocation');
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
@@ -356,6 +377,10 @@ export async function updateCourierLocation(lat: number, lng: number): Promise<v
 }
 
 export async function setCourierAvailability(available: boolean): Promise<void> {
+  // Mothballed pre-pivot courier-dispatch surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  assertConsumerSurfaceEnabled('setCourierAvailability');
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;

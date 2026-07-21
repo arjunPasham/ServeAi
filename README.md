@@ -1,10 +1,15 @@
 # FoodLink
 
-Surplus-food marketplace: donors post food, an AI scan prices it, consumers buy,
-and couriers deliver. Built with Next.js 16, Supabase, Inngest, and Stripe. Every
-paid integration (Stripe, Twilio, OneSignal, Google Routes, Smarty) has a
-simulated **dev mode**, so the only hard requirement to run locally is a Supabase
-project + a Gemini API key.
+The operating system for surplus food (pivot in progress — see `analysis/` and
+`PHASE_1_PLAN.md`). Merchants scan surplus with an AI vision pipeline; every scan
+becomes structured, valued inventory; confirmed manifests become declared loads for
+batched cold-chain routes to institutions. Built with Next.js 16, Supabase, Inngest,
+and Stripe. Every paid integration has a simulated **dev mode**, so the only hard
+requirement to run locally is a Supabase project + a Gemini API key.
+
+> The legacy consumer marketplace (donor listings → consumer checkout → courier
+> delivery) is mothballed behind `NEXT_PUBLIC_CONSUMER_ENABLED` and will be removed
+> as pivot phases replace its dependencies.
 
 ## Getting started
 
@@ -24,6 +29,7 @@ npx inngest-cli@latest dev         # terminal 2 — background jobs (http://loca
 
 | Doc | Covers |
 |---|---|
+| `analysis/` + `PHASE_1_PLAN.md` | **Pivot source of truth** — audit, red-team, transition plan, Phase 1 build plan |
 | [docs/SETUP.md](docs/SETUP.md) | Local setup, env vars, demo script, admin creation, Stripe mode |
 | [docs/FoodLink_PRD_v2.md](docs/FoodLink_PRD_v2.md) | Product requirements |
 | [docs/FoodLink_TRD_v1.1.md](docs/FoodLink_TRD_v1.1.md) | Technical requirements |

@@ -12,6 +12,11 @@ import { inngest } from '@/inngest/client';
 import { getDeliveryMode, getDeliveryProvider } from '@/lib/delivery';
 import { initiateFulfillment, quoteForOrder } from '@/lib/delivery/initiate';
 import { redirect } from 'next/navigation';
+import {
+  consumerSurfaceEnabled,
+  consumerDisabledResult,
+  assertConsumerSurfaceEnabled,
+} from '@/lib/mothballed';
 
 export type FulfillmentMethod = 'delivery' | 'pickup';
 
@@ -65,6 +70,10 @@ export async function claimListing(
   // what was displayed, we refuse to charge and return FEE_CHANGED instead.
   expectedFeeCents?: number
 ): Promise<ClaimResult> {
+  // Mothballed pre-pivot consumer-checkout surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  if (!consumerSurfaceEnabled()) return consumerDisabledResult();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
@@ -259,6 +268,10 @@ export async function getOrderDetails(orderId: string) {
 // so the order page never shows stale status even if a webhook was lost and
 // the cron reconciler hasn't run yet.
 export async function syncDeliveryStatus(orderId: string): Promise<void> {
+  // Mothballed pre-pivot consumer-checkout surface (Task 0.4) — gated, not
+  // deleted. See src/lib/mothballed.ts. Do not remove this to "fix" a caller.
+  assertConsumerSurfaceEnabled('syncDeliveryStatus');
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;

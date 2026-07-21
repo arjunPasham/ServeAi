@@ -5,9 +5,12 @@
 // declare_load RPC. All writes go through the service client; ownership is
 // enforced here (the RPC re-checks merchant ownership).
 
-import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/server';
+import { requireVerifiedMerchant, type RequireVerifiedMerchantResult } from '@/lib/authz';
 import { computeSafetyExpiry } from '@/lib/safety-window';
 import { currentValuations, type ValuationRow } from '@/lib/valuation';
+import { isValidCalendarDate } from '@/lib/dates';
+import { reportError } from '@/lib/report-error';
 
 export interface ManifestItemInput {
   scanItemId: string | null; // null = merchant added an item the AI missed
@@ -31,33 +34,31 @@ export interface CategoryOption {
 }
 
 export async function getMerchantContext(): Promise<{ merchantId: string; businessName: string } | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const service = await createServiceClient();
-  const { data, error } = await service
-    .from('merchants')
-    .select('id, business_name')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  // A DB outage must surface as an error, not silently masquerade as "not a
-  // merchant" (which would send an authenticated merchant to a login/signup
-  // redirect). No repo-wide precedent for read-path error handling in
-  // null-returning getters, so throw and let the error boundary handle it.
-  if (error) throw new Error(`getMerchantContext: merchants lookup failed: ${error.message}`);
-  if (!data) return null;
-  return { merchantId: data.id, businessName: data.business_name };
+  // Authenticated + phone-verified + owns a merchants row. An authz failure
+  // returns null so the caller redirects; an infra error throws (guard).
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) return null;
+  return { merchantId: authz.merchant.merchantId, businessName: authz.merchant.businessName };
 }
 
 export async function getCategoriesWithValuations(): Promise<CategoryOption[]> {
+  // Merchant-facing read (feeds the manifest editor): gate it too. Authz
+  // failure throws — this action is only reachable from the verified-merchant
+  // scan flow, so the scan UI's catch surfacing "couldn't load" is acceptable.
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) throw new Error(`getCategoriesWithValuations: not a verified merchant (${authz.error})`);
+
   const service = await createServiceClient();
 
   const [{ data: cats, error: catError }, { data: vals, error: valError }] = await Promise.all([
     service.from('categories').select('category_key, label, temperature_sensitive, safety_window_hours, sort').order('sort'),
     service.from('valuation_table').select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from'),
   ]);
-  if (catError || valError) return [];
+  // Same reasoning as getMerchantContext/getMerchantDashboard: a DB outage
+  // must not present as "no categories" — throw so it surfaces via the error
+  // boundary instead of silently rendering an empty manifest UI.
+  if (catError) throw new Error(`getCategoriesWithValuations: categories lookup failed: ${catError.message}`);
+  if (valError) throw new Error(`getCategoriesWithValuations: valuation_table lookup failed: ${valError.message}`);
 
   const rows: ValuationRow[] = (vals ?? []).map(v => ({
     categoryKey: v.category_key,
@@ -84,33 +85,61 @@ export async function confirmManifest(params: {
   windowDate: string; // YYYY-MM-DD
   items: ManifestItemInput[];
 }): Promise<ConfirmManifestResult> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: 'NOT_AUTHENTICATED' };
+  // merchantId is unknown until authz resolves; held in a mutable field
+  // (rather than a reassigned `let`) so `fail` below can close over it while
+  // it's still `const` from ESLint's point of view.
+  const ctx: { merchantId: string | undefined } = { merchantId: undefined };
 
-  if (!params.items.length) return { success: false, error: 'EMPTY_MANIFEST' };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.windowDate) || Number.isNaN(Date.parse(params.windowDate))) {
-    return { success: false, error: 'INVALID_WINDOW_DATE' };
+  // Every failure exit in this action goes through here (review I7:
+  // confirmManifest previously had zero logging, so a 2am declare failure
+  // left no trace anywhere). Logs merchantId/scanRecordId/windowDate, the
+  // typed error code returned to the caller, and the underlying
+  // supabase/thrown error where one is present — mirrors the persist-failure
+  // log style at src/app/api/scan/route.ts. Does not change the return
+  // contract: every call site returns exactly what it returned before.
+  function fail(error: string, underlyingError?: unknown): ConfirmManifestResult {
+    const underlying =
+      underlyingError == null
+        ? undefined
+        : (underlyingError as { message?: string }).message ?? String(underlyingError);
+    reportError('[manifest] confirmManifest failed', {
+      merchantId: ctx.merchantId,
+      scanRecordId: params.scanRecordId,
+      windowDate: params.windowDate,
+      error,
+      ...(underlying !== undefined ? { underlyingError: underlying } : {}),
+    });
+    return { success: false, error };
+  }
+
+  // Gate on the full invariant (authenticated + phone-verified + merchant).
+  // An infra error from the guard maps to SERVER_ERROR to preserve this
+  // action's typed-result contract (the guard throws on DB outage).
+  let authz: RequireVerifiedMerchantResult;
+  try {
+    authz = await requireVerifiedMerchant();
+  } catch (err) {
+    return fail('SERVER_ERROR', err);
+  }
+  if (!authz.ok) return fail(authz.error);
+  const merchantId = authz.merchant.merchantId;
+  ctx.merchantId = merchantId;
+
+  if (!params.items.length) return fail('EMPTY_MANIFEST');
+  if (!isValidCalendarDate(params.windowDate)) {
+    return fail('INVALID_WINDOW_DATE');
   }
 
   const service = await createServiceClient();
-
-  const { data: merchant, error: merchantError } = await service
-    .from('merchants')
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (merchantError) return { success: false, error: 'SERVER_ERROR' };
-  if (!merchant) return { success: false, error: 'NOT_A_MERCHANT' };
 
   const { data: scanRecord, error: scanRecordError } = await service
     .from('scan_records')
     .select('id')
     .eq('id', params.scanRecordId)
-    .eq('merchant_id', merchant.id)
+    .eq('merchant_id', merchantId)
     .maybeSingle();
-  if (scanRecordError) return { success: false, error: 'SERVER_ERROR' };
-  if (!scanRecord) return { success: false, error: 'SCAN_NOT_FOUND' };
+  if (scanRecordError) return fail('SERVER_ERROR', scanRecordError);
+  if (!scanRecord) return fail('SCAN_NOT_FOUND');
 
   // Category lookup (also validates every key)
   const keys = [...new Set(params.items.map(i => i.categoryKey))];
@@ -118,12 +147,12 @@ export async function confirmManifest(params: {
     .from('categories')
     .select('category_key, temperature_sensitive, safety_window_hours')
     .in('category_key', keys);
-  if (catError) return { success: false, error: 'SERVER_ERROR' };
+  if (catError) return fail('SERVER_ERROR', catError);
   const catByKey = new Map((cats ?? []).map(c => [c.category_key as string, c]));
   for (const item of params.items) {
-    if (!catByKey.has(item.categoryKey)) return { success: false, error: 'UNKNOWN_CATEGORY' };
-    if (!item.foodName.trim()) return { success: false, error: 'FOOD_NAME_REQUIRED' };
-    if (!(item.estLbs > 0)) return { success: false, error: 'INVALID_QUANTITY' };
+    if (!catByKey.has(item.categoryKey)) return fail('UNKNOWN_CATEGORY');
+    if (!item.foodName.trim()) return fail('FOOD_NAME_REQUIRED');
+    if (!(item.estLbs > 0)) return fail('INVALID_QUANTITY');
   }
 
   // Pre-flight valuation check, before any write. declare_load's own
@@ -137,7 +166,7 @@ export async function confirmManifest(params: {
     .from('valuation_table')
     .select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from')
     .in('category_key', keys);
-  if (valError) return { success: false, error: 'SERVER_ERROR' };
+  if (valError) return fail('SERVER_ERROR', valError);
   const currentVals = currentValuations(
     (valRows ?? []).map((v): ValuationRow => ({
       categoryKey: v.category_key,
@@ -147,7 +176,7 @@ export async function confirmManifest(params: {
     }))
   );
   for (const key of keys) {
-    if (!currentVals.has(key)) return { success: false, error: 'VALUATION_MISSING' };
+    if (!currentVals.has(key)) return fail('VALUATION_MISSING');
   }
 
   // Existing, still-pending items on this scan record
@@ -157,12 +186,12 @@ export async function confirmManifest(params: {
     .eq('scan_record_id', params.scanRecordId)
     .is('load_id', null)
     .eq('disposition', 'pending');
-  if (existingError) return { success: false, error: 'SERVER_ERROR' };
+  if (existingError) return fail('SERVER_ERROR', existingError);
   const existingIds = new Set((existing ?? []).map(r => r.id as string));
 
   const keptIds = params.items.filter(i => i.scanItemId).map(i => i.scanItemId as string);
   for (const id of keptIds) {
-    if (!existingIds.has(id)) return { success: false, error: 'ITEM_NOT_IN_SCAN' };
+    if (!existingIds.has(id)) return fail('ITEM_NOT_IN_SCAN');
   }
 
   const nowIso = new Date().toISOString();
@@ -174,7 +203,7 @@ export async function confirmManifest(params: {
       { temperatureSensitive: cat.temperature_sensitive, safetyWindowHours: cat.safety_window_hours },
       item.preparedAt
     );
-    if (!safety.ok) return { success: false, error: safety.error };
+    if (!safety.ok) return fail(safety.error);
 
     const fields = {
       food_name: item.foodName.trim(),
@@ -188,12 +217,19 @@ export async function confirmManifest(params: {
     };
 
     if (item.scanItemId) {
+      // Guard against a concurrent confirm (double submit / two tabs): only
+      // rewrite items that are still unlinked and pending. If a race already
+      // linked this item to a load, this matches 0 rows (no error) and
+      // declare_load rejects the whole confirm with ITEMS_NOT_DECLARABLE —
+      // that's the authoritative gate; this just prevents dataset noise.
       const { error } = await service
         .from('scan_items')
         .update(fields)
         .eq('id', item.scanItemId)
-        .eq('scan_record_id', params.scanRecordId);
-      if (error) return { success: false, error: 'SERVER_ERROR' };
+        .eq('scan_record_id', params.scanRecordId)
+        .is('load_id', null)
+        .eq('disposition', 'pending');
+      if (error) return fail('SERVER_ERROR', error);
       confirmedIds.push(item.scanItemId);
     } else {
       // Merchant-added item the AI missed — ai_* fields record that origin
@@ -207,7 +243,7 @@ export async function confirmManifest(params: {
         })
         .select('id')
         .single();
-      if (error || !added) return { success: false, error: 'SERVER_ERROR' };
+      if (error || !added) return fail('SERVER_ERROR', error);
       confirmedIds.push(added.id);
     }
   }
@@ -220,21 +256,21 @@ export async function confirmManifest(params: {
       .from('scan_items')
       .update({ disposition: 'not_shipped', disposition_at: nowIso })
       .in('id', removedIds);
-    if (error) return { success: false, error: 'SERVER_ERROR' };
+    if (error) return fail('SERVER_ERROR', error);
   }
 
   const { data: load, error: declareError } = await service.rpc('declare_load', {
-    p_merchant_id: merchant.id,
-    p_declared_by: user.id,
+    p_merchant_id: merchantId,
+    p_declared_by: authz.merchant.userId,
     p_window_date: params.windowDate,
     p_scan_item_ids: confirmedIds,
   });
   if (declareError || !load) {
     const msg = declareError?.message ?? '';
-    if (msg.includes('ITEMS_NOT_DECLARABLE')) return { success: false, error: 'ITEMS_NOT_DECLARABLE' };
-    if (msg.includes('VALUATION_MISSING')) return { success: false, error: 'VALUATION_MISSING' };
-    if (msg.includes('EMPTY_LOAD')) return { success: false, error: 'EMPTY_MANIFEST' };
-    return { success: false, error: 'SERVER_ERROR' };
+    if (msg.includes('ITEMS_NOT_DECLARABLE')) return fail('ITEMS_NOT_DECLARABLE', declareError);
+    if (msg.includes('VALUATION_MISSING')) return fail('VALUATION_MISSING', declareError);
+    if (msg.includes('EMPTY_LOAD')) return fail('EMPTY_MANIFEST', declareError);
+    return fail('SERVER_ERROR', declareError);
   }
 
   return { success: true, loadId: load.id };
@@ -250,26 +286,16 @@ export interface DashboardLoad {
 }
 
 export async function getMerchantDashboard(): Promise<{ businessName: string; loads: DashboardLoad[] } | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  // Authz failure returns null so the page redirects to /login; infra error
+  // throws (guard) and surfaces via the error boundary.
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) return null;
 
   const service = await createServiceClient();
-  const { data: merchant, error: merchantError } = await service
-    .from('merchants')
-    .select('id, business_name')
-    .eq('user_id', user.id)
-    .maybeSingle();
-  // Same reasoning as getMerchantContext: a DB outage must not present as
-  // "no merchant profile" — throw so it surfaces via the error boundary
-  // instead of silently rendering an empty/wrong dashboard state.
-  if (merchantError) throw new Error(`getMerchantDashboard: merchants lookup failed: ${merchantError.message}`);
-  if (!merchant) return null;
-
   const { data: loads, error: loadsError } = await service
     .from('loads')
     .select('id, window_date, status, earliest_safety_expires_at, created_at, load_items(id, est_lbs, fmv_per_lb_cents)')
-    .eq('merchant_id', merchant.id)
+    .eq('merchant_id', authz.merchant.merchantId)
     .order('created_at', { ascending: false })
     .limit(20);
   // Worst case if unchecked: a failed loads query renders as `loads: []`,
@@ -277,7 +303,7 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
   if (loadsError) throw new Error(`getMerchantDashboard: loads lookup failed: ${loadsError.message}`);
 
   return {
-    businessName: merchant.business_name,
+    businessName: authz.merchant.businessName,
     loads: (loads ?? []) as unknown as DashboardLoad[],
   };
 }

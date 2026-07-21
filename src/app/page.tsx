@@ -4,22 +4,22 @@ import { Store, ShoppingBasket, Truck, ShieldCheck, Clock, HandCoins, ArrowRight
 const ROLES = [
   {
     icon: Store,
-    label: 'Donors',
-    desc: 'List surplus food in under a minute — our AI handles pricing and food safety windows',
+    label: 'Merchants',
+    desc: 'Scan surplus in four minutes — we handle matching, cold logistics, and the donation tax paperwork',
     accent: 'text-primary',
     bg: 'bg-primary/10',
   },
   {
     icon: ShoppingBasket,
-    label: 'Consumers',
-    desc: 'Browse verified listings nearby and pay a fraction of retail price',
+    label: 'Institutions',
+    desc: 'Shelters and community kitchens see itemized inbound food before it arrives — donated or deeply discounted',
     accent: 'text-accent',
     bg: 'bg-accent/10',
   },
   {
     icon: Truck,
-    label: 'Pickup or delivery',
-    desc: 'Grab your order at the donor for free, or have a courier bring it to your door same-day',
+    label: 'Cold routes',
+    desc: 'Contracted refrigerated couriers run batched evening routes with temps and confirmations logged end to end',
     accent: 'text-courier',
     bg: 'bg-courier/10',
   },
@@ -95,9 +95,9 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg text-muted-foreground max-w-lg mb-10 leading-relaxed">
-            FoodLink connects donors with surplus food to consumers who need it —
-            picked up in person or delivered same-day by our delivery partner
-            before anything spoils.
+            FoodLink is the operating system for surplus food — merchants scan what
+            won&apos;t sell, institutions receive it cold and documented the same
+            evening, and the tax paperwork writes itself.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -184,7 +184,7 @@ export default function HomePage() {
             Ready to rescue food in your community?
           </h2>
           <p className="text-primary-foreground/80 mb-8 max-w-md mx-auto relative">
-            Sign up as a donor or consumer — it takes about a minute.
+            Sign up as a merchant — it takes about a minute.
           </p>
           <Link
             href="/register"
