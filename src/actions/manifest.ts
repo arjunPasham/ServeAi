@@ -1,9 +1,11 @@
 'use server';
 
-// Merchant manifest actions (Phase 1 pivot): confirm the AI's manifest,
+// Merchant manifest actions (Phase 1/2 pivot): confirm the AI's manifest,
 // close out removed items, and declare tonight's load atomically via the
-// declare_load RPC. All writes go through the service client; ownership is
-// enforced here (the RPC re-checks merchant ownership).
+// confirm_and_declare RPC (024). All writes go through the service client;
+// merchant identity is enforced here (requireVerifiedMerchant); the RPC
+// re-checks scan-record ownership and item eligibility, and folds the
+// write-then-declare sequence into one transaction.
 
 import { createServiceClient } from '@/lib/supabase/server';
 import { requireVerifiedMerchant, type RequireVerifiedMerchantResult } from '@/lib/authz';
@@ -132,16 +134,10 @@ export async function confirmManifest(params: {
 
   const service = await createServiceClient();
 
-  const { data: scanRecord, error: scanRecordError } = await service
-    .from('scan_records')
-    .select('id')
-    .eq('id', params.scanRecordId)
-    .eq('merchant_id', merchantId)
-    .maybeSingle();
-  if (scanRecordError) return fail('SERVER_ERROR', scanRecordError);
-  if (!scanRecord) return fail('SCAN_NOT_FOUND');
-
-  // Category lookup (also validates every key)
+  // Category lookup (also validates every key). Ownership of the scan record
+  // and eligibility of each scan_item_id are re-checked by confirm_and_declare
+  // itself (SCAN_NOT_FOUND / ITEM_NOT_IN_SCAN) — no need to duplicate those
+  // reads here before the RPC call.
   const keys = [...new Set(params.items.map(i => i.categoryKey))];
   const { data: cats, error: catError } = await service
     .from('categories')
@@ -155,48 +151,20 @@ export async function confirmManifest(params: {
     if (!(item.estLbs > 0)) return fail('INVALID_QUANTITY');
   }
 
-  // Pre-flight valuation check, before any write. declare_load's own
-  // VALUATION_MISSING check only runs after the scan_items mutations below
-  // (confirm updates, manual-item inserts, not_shipped closeouts) have already
-  // been written, so a category with no current valuation would otherwise
-  // burn those writes before the RPC rejects the declare. The UI's dropdown
-  // already filters to valued categories, but this action is directly
-  // callable, so re-check here as cheap insurance against a partial write.
-  const { data: valRows, error: valError } = await service
-    .from('valuation_table')
-    .select('category_key, fmv_per_lb_cents, basis_per_lb_cents, effective_from')
-    .in('category_key', keys);
-  if (valError) return fail('SERVER_ERROR', valError);
-  const currentVals = currentValuations(
-    (valRows ?? []).map((v): ValuationRow => ({
-      categoryKey: v.category_key,
-      fmvPerLbCents: v.fmv_per_lb_cents,
-      basisPerLbCents: v.basis_per_lb_cents,
-      effectiveFrom: v.effective_from,
-    }))
-  );
-  for (const key of keys) {
-    if (!currentVals.has(key)) return fail('VALUATION_MISSING');
-  }
-
-  // Existing, still-pending items on this scan record
-  const { data: existing, error: existingError } = await service
-    .from('scan_items')
-    .select('id')
-    .eq('scan_record_id', params.scanRecordId)
-    .is('load_id', null)
-    .eq('disposition', 'pending');
-  if (existingError) return fail('SERVER_ERROR', existingError);
-  const existingIds = new Set((existing ?? []).map(r => r.id as string));
-
-  const keptIds = params.items.filter(i => i.scanItemId).map(i => i.scanItemId as string);
-  for (const id of keptIds) {
-    if (!existingIds.has(id)) return fail('ITEM_NOT_IN_SCAN');
-  }
-
-  const nowIso = new Date().toISOString();
-  const confirmedIds: string[] = [];
-
+  // Compute per-item safety fields in TS (computeSafetyExpiry stays the
+  // single safety-math source) and hand the whole manifest to
+  // confirm_and_declare, which persists the confirm/insert/close-out writes
+  // and declares the load in one transaction (review I5: was a non-atomic
+  // write-then-declare_load sequence across separate PostgREST calls).
+  const rpcItems: {
+    scan_item_id: string | null;
+    food_name: string;
+    category_key: string;
+    est_lbs: number;
+    temperature_sensitive: boolean;
+    prepared_at: string | null;
+    safety_expires_at: string | null;
+  }[] = [];
   for (const item of params.items) {
     const cat = catByKey.get(item.categoryKey)!;
     const safety = computeSafetyExpiry(
@@ -205,72 +173,32 @@ export async function confirmManifest(params: {
     );
     if (!safety.ok) return fail(safety.error);
 
-    const fields = {
+    rpcItems.push({
+      scan_item_id: item.scanItemId,
       food_name: item.foodName.trim(),
       category_key: item.categoryKey,
       est_lbs: item.estLbs,
       temperature_sensitive: cat.temperature_sensitive,
       prepared_at: cat.temperature_sensitive ? item.preparedAt : null,
       safety_expires_at: safety.safetyExpiresAt,
-      merchant_confirmed: true,
-      confirmed_at: nowIso,
-    };
-
-    if (item.scanItemId) {
-      // Guard against a concurrent confirm (double submit / two tabs): only
-      // rewrite items that are still unlinked and pending. If a race already
-      // linked this item to a load, this matches 0 rows (no error) and
-      // declare_load rejects the whole confirm with ITEMS_NOT_DECLARABLE —
-      // that's the authoritative gate; this just prevents dataset noise.
-      const { error } = await service
-        .from('scan_items')
-        .update(fields)
-        .eq('id', item.scanItemId)
-        .eq('scan_record_id', params.scanRecordId)
-        .is('load_id', null)
-        .eq('disposition', 'pending');
-      if (error) return fail('SERVER_ERROR', error);
-      confirmedIds.push(item.scanItemId);
-    } else {
-      // Merchant-added item the AI missed — ai_* fields record that origin
-      const { data: added, error } = await service
-        .from('scan_items')
-        .insert({
-          scan_record_id: params.scanRecordId,
-          ...fields,
-          ai_food_name: '(added manually)',
-          ai_confidence: 0,
-        })
-        .select('id')
-        .single();
-      if (error || !added) return fail('SERVER_ERROR', error);
-      confirmedIds.push(added.id);
-    }
+    });
   }
 
-  // Items the merchant removed from the manifest: closed out as not_shipped —
-  // the disposition dataset must never dangle (analysis/03, schema decision 1).
-  const removedIds = [...existingIds].filter(id => !keptIds.includes(id));
-  if (removedIds.length) {
-    const { error } = await service
-      .from('scan_items')
-      .update({ disposition: 'not_shipped', disposition_at: nowIso })
-      .in('id', removedIds);
-    if (error) return fail('SERVER_ERROR', error);
-  }
-
-  const { data: load, error: declareError } = await service.rpc('declare_load', {
+  const { data: load, error } = await service.rpc('confirm_and_declare', {
     p_merchant_id: merchantId,
     p_declared_by: authz.merchant.userId,
+    p_scan_record_id: params.scanRecordId,
     p_window_date: params.windowDate,
-    p_scan_item_ids: confirmedIds,
+    p_items: rpcItems,
   });
-  if (declareError || !load) {
-    const msg = declareError?.message ?? '';
-    if (msg.includes('ITEMS_NOT_DECLARABLE')) return fail('ITEMS_NOT_DECLARABLE', declareError);
-    if (msg.includes('VALUATION_MISSING')) return fail('VALUATION_MISSING', declareError);
-    if (msg.includes('EMPTY_LOAD')) return fail('EMPTY_MANIFEST', declareError);
-    return fail('SERVER_ERROR', declareError);
+  if (error || !load) {
+    const msg = error?.message ?? '';
+    if (msg.includes('SCAN_NOT_FOUND')) return fail('SCAN_NOT_FOUND', error);
+    if (msg.includes('ITEM_NOT_IN_SCAN')) return fail('ITEM_NOT_IN_SCAN', error);
+    if (msg.includes('UNKNOWN_CATEGORY')) return fail('UNKNOWN_CATEGORY', error);
+    if (msg.includes('ITEMS_NOT_DECLARABLE')) return fail('ITEMS_NOT_DECLARABLE', error);
+    if (msg.includes('VALUATION_MISSING')) return fail('VALUATION_MISSING', error);
+    return fail('SERVER_ERROR', error);
   }
 
   return { success: true, loadId: load.id };
@@ -292,9 +220,15 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
   if (!authz.ok) return null;
 
   const service = await createServiceClient();
+  // .select<Query, Row>() is supabase-js's own escape valve for a client with
+  // no generated Database schema: it types `data` as DashboardLoad[] | null
+  // directly (no `as unknown as` needed) so tsc actually checks the shape
+  // below, instead of trusting an untyped `any[]` cast.
   const { data: loads, error: loadsError } = await service
     .from('loads')
-    .select('id, window_date, status, earliest_safety_expires_at, created_at, load_items(id, est_lbs, fmv_per_lb_cents)')
+    .select<string, DashboardLoad>(
+      'id, window_date, status, earliest_safety_expires_at, created_at, load_items(id, est_lbs, fmv_per_lb_cents)'
+    )
     .eq('merchant_id', authz.merchant.merchantId)
     .order('created_at', { ascending: false })
     .limit(20);
@@ -304,6 +238,6 @@ export async function getMerchantDashboard(): Promise<{ businessName: string; lo
 
   return {
     businessName: authz.merchant.businessName,
-    loads: (loads ?? []) as unknown as DashboardLoad[],
+    loads: loads ?? [],
   };
 }
