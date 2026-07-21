@@ -14,8 +14,14 @@ export const FOOD_TO_CATEGORY_KEY: Record<FoodCategory, string> = {
   'Salad': 'PREPARED_COLD',
   'Soup': 'PREPARED_HOT',
   'Bread & Bakery': 'BAKERY',
-  'Dessert': 'BAKERY',
-  'Fruit': 'PRODUCE_WHOLE',
+  // Dominantly the perishable case (cheesecake/custard/cream/tiramisu) —
+  // conservative-by-default; a shelf-stable cookie tray can be deliberately
+  // re-picked to BAKERY in the editor (audit #2, 2026-07-21).
+  'Dessert': 'PREPARED_COLD',
+  // In a surplus-catering scan context, "Fruit" is typically a cut fruit
+  // platter/salad (TCS); whole fruit can be deliberately re-picked to
+  // PRODUCE_WHOLE (audit #2, 2026-07-21).
+  'Fruit': 'CUT_PRODUCE',
   'Dairy': 'DAIRY',
   'Beverage': 'BEVERAGE',
   'Mixed/Prepared Meal': 'PREPARED_HOT',
