@@ -220,4 +220,54 @@ test.describe('billing RPCs', () => {
     expect(e2).toBeNull();
     expect(r2).toBe('ignored');
   });
+
+  test('a null subscription_status does not wedge the webhook (030): coalesced to "none"', async () => {
+    const user = await createTestUser(ctx, 'donor', { emailLabel: 'nullsub' });
+    const { merchantId } = await createMerchant(ctx, user.id);
+    const customerId = `cus_${ctx.runId}_nsub`;
+    await service.rpc('link_billing_customer', {
+      p_merchant_id: merchantId,
+      p_stripe_customer_id: customerId,
+      p_actor: user.id,
+    });
+
+    // First make it 'active', so the null-status update below must actively
+    // coalesce it to 'none' (proving the fix, not a pre-existing default).
+    await service.rpc('handle_billing_webhook', {
+      p_event_id: `evt-${ctx.runId}-nsub-create`,
+      p_event_type: 'customer.subscription.created',
+      p_payload: {
+        stripe_customer_id: customerId,
+        stripe_subscription_id: `sub_${ctx.runId}_ns`,
+        subscription_status: 'active',
+        current_period_end: periodEnd(),
+      },
+    });
+
+    // subscription_status intentionally OMITTED → would violate NOT NULL and
+    // wedge the webhook before 030; now COALESCEs to 'none' and processes.
+    const { data: r1, error: e1 } = await service.rpc('handle_billing_webhook', {
+      p_event_id: `evt-${ctx.runId}-nsub-update`,
+      p_event_type: 'customer.subscription.updated',
+      p_payload: {
+        stripe_customer_id: customerId,
+        stripe_subscription_id: `sub_${ctx.runId}_ns`,
+        current_period_end: periodEnd(),
+      },
+    });
+    expect(e1).toBeNull();
+    expect(r1).toBe('processed');
+
+    const { data: m } = await service.from('merchants').select('subscription_status').eq('id', merchantId).single();
+    expect(m!.subscription_status).toBe('none');
+
+    // Empty-string invoice id (M1) is acked-and-skipped like a missing one.
+    const { data: r2, error: e2 } = await service.rpc('handle_billing_webhook', {
+      p_event_id: `evt-${ctx.runId}-emptyid`,
+      p_event_type: 'invoice.paid',
+      p_payload: { stripe_customer_id: customerId, stripe_invoice_id: '', amount_paid_cents: '9900' },
+    });
+    expect(e2).toBeNull();
+    expect(r2).toBe('ignored');
+  });
 });
