@@ -29,6 +29,18 @@ export function isBillingPlan(plan: string): plan is BillingPlan {
   return plan === 'weekly' || plan === 'monthly' || plan === 'annual';
 }
 
+// A merchant may START a new subscription ONLY when they have no live one, or
+// double-billing results: active/trialing are subscribed; past_due/unpaid/
+// incomplete/paused all mean a subscription Stripe is still managing (dunning /
+// awaiting first payment), so a fresh Checkout would create a SECOND
+// subscription. Only these terminal/empty states are safe to (re)start from.
+// An unknown/future status is treated as NOT startable (conservative — never
+// risk a duplicate charge).
+const STARTABLE_SUBSCRIPTION_STATUSES = new Set(['none', 'canceled', 'incomplete_expired']);
+export function canStartSubscription(subscriptionStatus: string): boolean {
+  return STARTABLE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
+}
+
 /** Advances an ISO timestamp by one billing interval. Used to synthesize a
  *  current_period_end for the dev-mode subscription simulation. Pure. */
 export function addBillingInterval(fromIso: string, interval: PlanConfig['interval']): string {

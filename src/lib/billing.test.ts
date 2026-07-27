@@ -3,6 +3,7 @@ import type Stripe from 'stripe';
 import {
   BILLING_PLANS,
   isBillingPlan,
+  canStartSubscription,
   addBillingInterval,
   buildBillingEventPayload,
 } from './billing';
@@ -20,6 +21,22 @@ describe('BILLING_PLANS / isBillingPlan', () => {
     expect(isBillingPlan('annual')).toBe(true);
     expect(isBillingPlan('per_pickup')).toBe(false); // usage/sale lane, not billable via subscription
     expect(isBillingPlan('nope')).toBe(false);
+  });
+});
+
+describe('canStartSubscription', () => {
+  test('only no-live-subscription states can start a new one', () => {
+    for (const s of ['none', 'canceled', 'incomplete_expired']) {
+      expect(canStartSubscription(s)).toBe(true);
+    }
+  });
+  test('any live/dunning subscription state blocks a new one (no double-billing)', () => {
+    for (const s of ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused']) {
+      expect(canStartSubscription(s)).toBe(false);
+    }
+  });
+  test('an unknown/future status is treated as NOT startable (conservative)', () => {
+    expect(canStartSubscription('some_new_stripe_status')).toBe(false);
   });
 });
 

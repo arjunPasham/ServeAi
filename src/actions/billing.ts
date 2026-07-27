@@ -24,7 +24,7 @@ import {
   createBillingCustomer,
   createSubscriptionCheckoutSession,
 } from '@/lib/stripe';
-import { BILLING_PLANS, isBillingPlan, addBillingInterval } from '@/lib/billing';
+import { BILLING_PLANS, isBillingPlan, canStartSubscription, addBillingInterval } from '@/lib/billing';
 
 async function requireAdmin(): Promise<boolean> {
   const supabase = await createClient();
@@ -79,7 +79,10 @@ export async function startMerchantSubscription(merchantId: string): Promise<Sta
   if (!merchant) return { success: false, error: 'MERCHANT_NOT_FOUND' };
 
   if (!isBillingPlan(merchant.plan)) return { success: false, error: 'NOT_SUBSCRIPTION_PLAN' };
-  if (merchant.subscription_status === 'active' || merchant.subscription_status === 'trialing') {
+  // Block whenever a live subscription already exists — not just active/trialing.
+  // A delinquent (past_due/unpaid/incomplete/paused) merchant still has a
+  // subscription Stripe is managing; a fresh Checkout here would DOUBLE-BILL.
+  if (!canStartSubscription(merchant.subscription_status)) {
     return { success: false, error: 'ALREADY_SUBSCRIBED' };
   }
 

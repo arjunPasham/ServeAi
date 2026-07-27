@@ -18,6 +18,7 @@ import {
   getAdminScans,
 } from '@/actions/admin';
 import { startMerchantSubscription } from '@/actions/billing';
+import { canStartSubscription } from '@/lib/billing';
 import { currentValuations } from '@/lib/valuation';
 
 async function checkAdmin() {
@@ -244,6 +245,10 @@ export default async function AdminDashboardPage({
                 <tbody className="divide-y divide-gray-100">
                   {merchants.map(m => {
                     const subscribed = m.subscriptionStatus === 'active' || m.subscriptionStatus === 'trialing';
+                    // Only offer "Start" when there is no live subscription — a
+                    // delinquent (past_due/unpaid/…) merchant still has one, and a
+                    // second Checkout would double-bill (server-enforced too).
+                    const canStart = canStartSubscription(m.subscriptionStatus);
                     return (
                     <tr key={m.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">{m.businessName}</td>
@@ -259,7 +264,7 @@ export default async function AdminDashboardPage({
                         <span className={subscribed ? 'text-green-700 font-medium' : 'text-gray-500'}>
                           {m.subscriptionStatus}
                         </span>
-                        {!subscribed && (
+                        {canStart && (
                           <form action={startBillingAction} className="mt-1">
                             <input type="hidden" name="merchantId" value={m.id} />
                             <button
