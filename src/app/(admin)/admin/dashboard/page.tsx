@@ -18,7 +18,9 @@ import {
   getAdminScans,
 } from '@/actions/admin';
 import { startMerchantSubscription } from '@/actions/billing';
+import { getSurplusPatterns, getDanglingScanSummary } from '@/actions/reports';
 import { canStartSubscription } from '@/lib/billing';
+import { describeSurplusPattern } from '@/lib/reports';
 import { currentValuations } from '@/lib/valuation';
 
 async function checkAdmin() {
@@ -97,14 +99,21 @@ export default async function AdminDashboardPage({
   await checkAdmin();
   const { error, ok, billing } = await searchParams;
 
-  const [catalog, merchants, loads, scans] = await Promise.all([
+  const [catalog, merchants, loads, scans, surplusPatterns, dangling] = await Promise.all([
     getValuationCatalog(),
     getAdminMerchants(),
     getAdminLoads(),
     getAdminScans(),
+    getSurplusPatterns(),
+    getDanglingScanSummary(),
   ]);
 
   const current = currentValuations(catalog.valuations);
+
+  // Top surplus patterns across merchants (highest total lbs first), capped for
+  // the ops overview — the full ranked set is available per-merchant via the
+  // reports action / the 028 views.
+  const topPatterns = surplusPatterns.slice(0, 20);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -132,6 +141,13 @@ export default async function AdminDashboardPage({
         {billing === 'canceled' && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
             Checkout was canceled — the merchant has no active subscription.
+          </div>
+        )}
+        {dangling.count > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+            <span className="font-semibold">{dangling.count}</span> scan item{dangling.count === 1 ? '' : 's'} dangling in{' '}
+            <span className="font-mono">pending</span> with no load (abandoned manifests). Oldest:{' '}
+            {dangling.oldestCreatedAt ? <LocalDateTime iso={dangling.oldestCreatedAt} variant="date" /> : '—'}.
           </div>
         )}
 
@@ -217,6 +233,46 @@ export default async function AdminDashboardPage({
               </tbody>
             </table>
           </div>
+        </section>
+
+        {/* ─── Surplus patterns (supply intelligence — scan/declare signal) ─ */}
+        <section className="space-y-3">
+          <div>
+            <h2 className="font-semibold text-gray-900">Surplus patterns</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              What merchants tend to have left over, by category and weekday, over the last 90 days —
+              from confirmed scans + declared loads (supply signal only; no delivery outcome). Weekday is the
+              merchant&apos;s local (Eastern) day.
+            </p>
+          </div>
+          {topPatterns.length === 0 ? (
+            <p className="text-sm text-gray-500">No surplus patterns yet.</p>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-2xl overflow-x-auto">
+              <table className="w-full text-sm min-w-[640px]">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Merchant</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Pattern</th>
+                    <th className="text-right px-4 py-3 font-medium text-gray-600">Total lbs (90d)</th>
+                    <th className="text-right px-4 py-3 font-medium text-gray-600">Last seen</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {topPatterns.map(p => (
+                    <tr key={`${p.merchantId}-${p.categoryKey}-${p.localDow}`}>
+                      <td className="px-4 py-3 font-medium text-gray-900">{p.merchantBusinessName}</td>
+                      <td className="px-4 py-3 text-gray-700">{describeSurplusPattern(p)}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{p.totalEstLbs.toFixed(1)}</td>
+                      <td className="px-4 py-3 text-right text-gray-500 text-xs">
+                        <LocalDateTime iso={p.lastSeen} variant="date" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         {/* ─── Merchants (read-only) ──────────────────────────────────────── */}
