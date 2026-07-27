@@ -553,6 +553,10 @@ export async function cleanup(ctx: TestContext): Promise<void> {
     if (ctx.scanRecordIds.length) await service.from('scan_items').delete().in('scan_record_id', ctx.scanRecordIds);
     if (loadIds.length) await service.from('loads').delete().in('id', loadIds);
     if (ctx.scanRecordIds.length) await service.from('scan_records').delete().in('id', ctx.scanRecordIds);
+    // invoices.merchant_id -> merchants.id has no ON DELETE clause (027), so
+    // any invoice mirror rows a billing test created must go before the
+    // merchant delete below.
+    await service.from('invoices').delete().in('merchant_id', ctx.merchantIds);
     await service.from('merchants').delete().in('id', ctx.merchantIds);
   }
 

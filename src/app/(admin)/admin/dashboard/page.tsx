@@ -17,6 +17,7 @@ import {
   getAdminLoads,
   getAdminScans,
 } from '@/actions/admin';
+import { startMerchantSubscription } from '@/actions/billing';
 import { currentValuations } from '@/lib/valuation';
 
 async function checkAdmin() {
@@ -41,6 +42,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_BASIS: 'The basis must be a number ≥ 0 (dollars per lb).',
   UNKNOWN_CATEGORY: 'That category no longer exists.',
   INVALID_VALUATION: 'FMV and basis must both be present and ≥ 0.',
+  // Billing (Task B)
+  MERCHANT_NOT_FOUND: 'Merchant not found.',
+  NOT_SUBSCRIPTION_PLAN: "That merchant's plan isn't a subscription plan (weekly/monthly/annual).",
+  ALREADY_SUBSCRIBED: 'That merchant already has an active subscription.',
+  PRICE_NOT_CONFIGURED: 'No Stripe Price configured for that plan (set STRIPE_PRICE_* env vars).',
   SERVER_ERROR: 'Something went wrong — try again.',
 };
 
@@ -68,13 +74,27 @@ async function appendValuationAction(formData: FormData) {
   redirect(`/admin/dashboard?ok=${encodeURIComponent(categoryKey)}`);
 }
 
+// Start a merchant's subscription (Task B). Delegates to the admin-guarded
+// startMerchantSubscription. In dev the subscription is simulated active; in
+// prod we redirect the ops user straight to the Stripe Checkout URL to complete
+// setup (or hand off to the merchant).
+async function startBillingAction(formData: FormData) {
+  'use server';
+  const merchantId = String(formData.get('merchantId') ?? '');
+  const result = await startMerchantSubscription(merchantId);
+  revalidatePath('/admin/dashboard');
+  if (!result.success) redirect(`/admin/dashboard?error=${encodeURIComponent(result.error)}`);
+  if (result.mode === 'checkout') redirect(result.checkoutUrl);
+  redirect('/admin/dashboard?billing=started');
+}
+
 export default async function AdminDashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; ok?: string }>;
+  searchParams: Promise<{ error?: string; ok?: string; billing?: string }>;
 }) {
   await checkAdmin();
-  const { error, ok } = await searchParams;
+  const { error, ok, billing } = await searchParams;
 
   const [catalog, merchants, loads, scans] = await Promise.all([
     getValuationCatalog(),
@@ -101,6 +121,16 @@ export default async function AdminDashboardPage({
         {ok && (
           <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-800">
             New valuation saved for <span className="font-mono">{ok}</span>.
+          </div>
+        )}
+        {billing === 'started' && (
+          <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-800">
+            Subscription started.
+          </div>
+        )}
+        {billing === 'canceled' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+            Checkout was canceled — the merchant has no active subscription.
           </div>
         )}
 
@@ -206,12 +236,15 @@ export default async function AdminDashboardPage({
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Plan</th>
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Fee</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Billing</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Metro</th>
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Joined</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {merchants.map(m => (
+                  {merchants.map(m => {
+                    const subscribed = m.subscriptionStatus === 'active' || m.subscriptionStatus === 'trialing';
+                    return (
                     <tr key={m.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">{m.businessName}</td>
                       <td className="px-4 py-3 text-gray-600 font-mono text-xs">{m.ein ?? '—'}</td>
@@ -222,12 +255,29 @@ export default async function AdminDashboardPage({
                       <td className="px-4 py-3 text-gray-600">{m.plan}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{formatCents(m.feeCents)}</td>
                       <td className="px-4 py-3 text-gray-600">{m.status}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <span className={subscribed ? 'text-green-700 font-medium' : 'text-gray-500'}>
+                          {m.subscriptionStatus}
+                        </span>
+                        {!subscribed && (
+                          <form action={startBillingAction} className="mt-1">
+                            <input type="hidden" name="merchantId" value={m.id} />
+                            <button
+                              type="submit"
+                              className="bg-blue-600 text-white text-[11px] font-semibold rounded px-2 py-0.5 hover:bg-blue-700"
+                            >
+                              Start subscription
+                            </button>
+                          </form>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-gray-600">{m.metroId}</td>
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
                         <LocalDateTime iso={m.createdAt} variant="date" />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

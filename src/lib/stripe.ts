@@ -182,6 +182,63 @@ export async function transferToDonor(params: {
   });
 }
 
+// ─── Stripe Billing — merchant subscriptions (Task B, subscription lane only) ─
+
+// Ensure a Stripe Customer for a merchant. Dev mode returns a synthetic
+// cus_dev_* id (mirrors createPaymentIntent's simulation); the merchant row is
+// linked to it via the link_billing_customer RPC by the caller.
+export async function createBillingCustomer(params: {
+  merchantId: string;
+  email: string;
+  name: string;
+}): Promise<{ customerId: string }> {
+  if (isStripeDevMode()) {
+    const id = `cus_dev_${randomUUID().replace(/-/g, '')}`;
+    console.log(`[DEV] Simulated billing Customer ${id} for merchant ${params.merchantId}`);
+    return { customerId: id };
+  }
+
+  const customer = await getStripe().customers.create({
+    email: params.email,
+    name: params.name,
+    metadata: { merchant_id: params.merchantId },
+  });
+  return { customerId: customer.id };
+}
+
+// Create a subscription Checkout Session for a merchant's plan. NO
+// payment_method_types (dynamic payment methods — Stripe best practice) and NO
+// automatic_tax (there's no Stripe Tax registration yet — enabling it would
+// silently collect nothing). Dev mode never reaches the network: the caller
+// simulates the subscription via handle_billing_webhook instead, so the guard
+// here is just a safety net that returns the success URL.
+export async function createSubscriptionCheckoutSession(params: {
+  customerId: string;
+  priceId: string;
+  merchantId: string;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<{ url: string }> {
+  if (isStripeDevMode()) {
+    console.log(`[DEV] Simulated subscription checkout for merchant ${params.merchantId}`);
+    return { url: params.successUrl };
+  }
+
+  const session = await getStripe().checkout.sessions.create({
+    mode: 'subscription',
+    customer: params.customerId,
+    line_items: [{ price: params.priceId, quantity: 1 }],
+    success_url: params.successUrl,
+    cancel_url: params.cancelUrl,
+    metadata: { merchant_id: params.merchantId },
+    subscription_data: { metadata: { merchant_id: params.merchantId } },
+  });
+  if (!session.url) {
+    throw new Error('createSubscriptionCheckoutSession: Stripe returned no session url');
+  }
+  return { url: session.url };
+}
+
 // ─── Stripe Connect Express onboarding (TRD Step 3/10, decision #2: Express) ──
 
 export async function createConnectAccount(params: {

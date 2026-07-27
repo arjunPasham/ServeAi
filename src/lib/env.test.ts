@@ -33,6 +33,13 @@ describe('missingRequiredEnv', () => {
     expect(missingRequiredEnv(env)).toEqual(['SUPABASE_SERVICE_ROLE_KEY']);
   });
 
+  test('reports a missing billing webhook secret (Task B fail-open: unverified billing webhooks)', () => {
+    const env = fullEnv();
+    delete env.STRIPE_BILLING_WEBHOOK_SECRET;
+
+    expect(missingRequiredEnv(env)).toEqual(['STRIPE_BILLING_WEBHOOK_SECRET']);
+  });
+
   test('treats an empty string as missing', () => {
     const env = fullEnv();
     env.TWILIO_VERIFY_SERVICE_SID = '';

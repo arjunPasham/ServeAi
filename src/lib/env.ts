@@ -46,11 +46,19 @@ export const REQUIRED_PROD_ENV = [
   'SMARTY_AUTH_TOKEN',
 
   // Stripe — missing STRIPE_SECRET_KEY makes src/lib/stripe.ts simulate
-  // PaymentIntents/Transfers/Refunds as instantly-"succeeded" synthetic
-  // objects (fake payments captured). Missing STRIPE_WEBHOOK_SECRET means
-  // incoming payment webhooks cannot be authenticated.
+  // PaymentIntents/Transfers/Refunds/subscriptions as instantly-"succeeded"
+  // synthetic objects (fake payments captured, subscriptions marked active
+  // with no real charge). Missing STRIPE_WEBHOOK_SECRET means incoming payment
+  // webhooks cannot be authenticated. Missing STRIPE_BILLING_WEBHOOK_SECRET
+  // means the merchant-subscription billing webhook
+  // (src/app/api/stripe/billing/webhook) cannot verify signatures — it
+  // fail-closes to 400, so subscription/invoice state would silently stop
+  // syncing from Stripe in prod. (STRIPE_PRICE_WEEKLY/MONTHLY/ANNUAL are NOT
+  // listed here: a missing Price id is a loud checkout-time error, not a
+  // silent fail-open, so it must not block boot.)
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_BILLING_WEBHOOK_SECRET',
 
   // Resend email — missing RESEND_API_KEY makes src/lib/email.ts log emails
   // to the console instead of sending them. EMAIL_FROM must be a verified

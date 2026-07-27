@@ -159,6 +159,7 @@ export interface AdminMerchant {
   plan: string;
   feeCents: number;
   status: string;
+  subscriptionStatus: string;
   metroId: string;
   createdAt: string;
 }
@@ -170,7 +171,7 @@ export async function getAdminMerchants(): Promise<AdminMerchant[]> {
   const service = await createServiceClient();
   const { data, error } = await service
     .from('merchants')
-    .select('id, business_name, ein, contact_name, phone, address, plan, fee_cents, status, metro_id, created_at')
+    .select('id, business_name, ein, contact_name, phone, address, plan, fee_cents, status, subscription_status, metro_id, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`getAdminMerchants: merchants lookup failed: ${error.message}`);
 
@@ -184,6 +185,7 @@ export async function getAdminMerchants(): Promise<AdminMerchant[]> {
     plan: m.plan,
     feeCents: m.fee_cents,
     status: m.status,
+    subscriptionStatus: m.subscription_status,
     metroId: m.metro_id,
     createdAt: m.created_at,
   }));
