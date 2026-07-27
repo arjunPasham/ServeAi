@@ -300,7 +300,7 @@ describe('verifyOTPAction', () => {
  * auth-admin surface registerAction uses (createUser/updateUserById/deleteUser).
  * Any table write resolves to { error: null } unless it's a tracked one.
  */
-function makeRegisterService() {
+function makeRegisterService(cfg?: { metaError?: string; deleteError?: string }) {
   const calls = {
     merchantsWrites: [] as { op: string; payload: unknown }[],
     donorInsert: [] as unknown[],
@@ -316,11 +316,11 @@ function makeRegisterService() {
     }),
     updateUserById: vi.fn(async (id: string, attrs: { app_metadata?: Record<string, unknown> }) => {
       calls.metaUpdate.push({ id, attrs });
-      return { data: {}, error: null };
+      return cfg?.metaError ? { data: null, error: { message: cfg.metaError } } : { data: {}, error: null };
     }),
     deleteUser: vi.fn(async () => {
       calls.deleteUser += 1;
-      return { data: {}, error: null };
+      return cfg?.deleteError ? { data: null, error: { message: cfg.deleteError } } : { data: {}, error: null };
     }),
   };
 
@@ -441,5 +441,57 @@ describe('registerAction', () => {
     const appMeta = calls.metaUpdate[0].attrs.app_metadata ?? {};
     expect(appMeta.phone_verified).toBe(false);
     expect(appMeta.pending_merchant).toBeUndefined();
+  });
+
+  // Compound-failure strand (audit data-integrity #1).
+  test('app_metadata failure with a successful rollback returns a retry-able error, no orphan log', async () => {
+    const { service, calls } = makeRegisterService({ metaError: 'auth admin unavailable' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateServiceClient.mockResolvedValue(service as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateClient.mockResolvedValue(makeRegisterAuthClient() as any);
+
+    const result = await registerAction(registerForm({
+      email: 'deli2@example.com',
+      password: 'password123',
+      role: 'donor',
+      phone: '313-555-2222',
+      address: '1 Woodward Ave, Detroit, MI 48226',
+      businessName: 'Test Deli',
+    }));
+
+    expect(result).toEqual({ success: false, error: 'PROFILE_UPDATE_FAILED' });
+    expect(calls.deleteUser).toBe(1); // rollback attempted…
+    // …and succeeded, so nothing is stranded and no orphan is logged.
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  test('app_metadata failure AND a failed rollback logs the orphan and returns a distinct support error', async () => {
+    const { service, calls } = makeRegisterService({
+      metaError: 'auth admin unavailable',
+      deleteError: 'delete failed too',
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateServiceClient.mockResolvedValue(service as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateClient.mockResolvedValue(makeRegisterAuthClient() as any);
+
+    const result = await registerAction(registerForm({
+      email: 'deli3@example.com',
+      password: 'password123',
+      role: 'donor',
+      phone: '313-555-3333',
+      address: '1 Woodward Ave, Detroit, MI 48226',
+      businessName: 'Test Deli',
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('contact support'); // distinct, honest, not a generic code
+    expect(calls.deleteUser).toBe(1);
+    // The orphaned auth user is logged (ops-recoverable), not silently swallowed.
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('orphaned auth user'),
+      expect.objectContaining({ userId: 'new-user', email: 'deli3@example.com' }),
+    );
   });
 });

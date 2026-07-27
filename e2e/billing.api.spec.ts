@@ -177,4 +177,47 @@ test.describe('billing RPCs', () => {
     expect(e2).toBeNull();
     expect(r2).toBe('ignored');
   });
+
+  test('a null invoice_status does not wedge the webhook (029 hardening): processed as "unknown"', async () => {
+    const user = await createTestUser(ctx, 'donor', { emailLabel: 'nullstatus' });
+    const { merchantId } = await createMerchant(ctx, user.id);
+    const customerId = `cus_${ctx.runId}_ns`;
+    await service.rpc('link_billing_customer', {
+      p_merchant_id: merchantId,
+      p_stripe_customer_id: customerId,
+      p_actor: user.id,
+    });
+
+    const invoiceId = `in_${ctx.runId}_ns`;
+    // invoice_status intentionally OMITTED → would violate the NOT NULL column
+    // before 029; now it must COALESCE to 'unknown' and process cleanly.
+    const { data: r1, error: e1 } = await service.rpc('handle_billing_webhook', {
+      p_event_id: `evt-${ctx.runId}-nullstatus`,
+      p_event_type: 'invoice.payment_failed',
+      p_payload: {
+        stripe_customer_id: customerId,
+        stripe_invoice_id: invoiceId,
+        amount_due_cents: '9900',
+        amount_paid_cents: '0',
+      },
+    });
+    expect(e1).toBeNull();
+    expect(r1).toBe('processed');
+
+    const { data: invoice } = await service
+      .from('invoices')
+      .select('status')
+      .eq('stripe_invoice_id', invoiceId)
+      .single();
+    expect(invoice!.status).toBe('unknown');
+
+    // A malformed invoice event with no invoice id is acked-and-skipped, not wedged.
+    const { data: r2, error: e2 } = await service.rpc('handle_billing_webhook', {
+      p_event_id: `evt-${ctx.runId}-noid`,
+      p_event_type: 'invoice.paid',
+      p_payload: { stripe_customer_id: customerId, amount_paid_cents: '9900' },
+    });
+    expect(e2).toBeNull();
+    expect(r2).toBe('ignored');
+  });
 });

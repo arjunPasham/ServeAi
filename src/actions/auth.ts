@@ -165,10 +165,35 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
   }
   const userId = created.user.id;
 
-  // Best-effort cleanup so a failed registration doesn't orphan the email
-  async function rollback() {
-    try { await service.auth.admin.deleteUser(userId); } catch {}
+  // Cleanup so a failed registration doesn't orphan the email. Returns whether
+  // the auth user was actually removed. A FAILED rollback (data-integrity #1)
+  // leaves an orphaned auth user that no later flow resolves — so it is LOGGED
+  // (ops-recoverable: the userId/email are traceable) instead of silently
+  // swallowed, and the callers surface a distinct, honest error rather than a
+  // generic one, so the outcome is deterministic.
+  async function rollback(reason: string): Promise<boolean> {
+    try {
+      const { error } = await service.auth.admin.deleteUser(userId);
+      if (error) {
+        console.error('[register] rollback failed — orphaned auth user needs manual cleanup', {
+          userId, email, reason, error: error.message,
+        });
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[register] rollback threw — orphaned auth user needs manual cleanup', {
+        userId, email, reason, error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   }
+
+  // A registration we couldn't finish AND couldn't roll back: the email is now
+  // taken by an unusable account. Honest, actionable, and distinct from the
+  // retry-able case (where rollback freed the email).
+  const STRANDED_ERROR =
+    'We couldn’t finish creating your account. Please contact support so we can resolve it.';
 
   // Update the auto-created public.users row (handle_new_auth_user trigger sets role='consumer')
   const { error: updateError } = await service
@@ -176,8 +201,8 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
     .update({ role, phone })
     .eq('id', userId);
   if (updateError) {
-    await rollback();
-    return { success: false, error: 'PROFILE_UPDATE_FAILED' };
+    const cleaned = await rollback('users.update failed');
+    return { success: false, error: cleaned ? 'PROFILE_UPDATE_FAILED' : STRANDED_ERROR };
   }
 
   // Merchant accounts (role='donor') are NOT provisioned here (review C1): the
@@ -210,8 +235,12 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
     },
   });
   if (metaError) {
-    await rollback();
-    return { success: false, error: 'PROFILE_UPDATE_FAILED' };
+    // The critical write: without it the account has no phone_verified marker
+    // and no pending_merchant stash, so it can never be driven to a working
+    // merchant. Roll back; if that also fails, the account is stranded — return
+    // the distinct STRANDED_ERROR (logged above) rather than a generic string.
+    const cleaned = await rollback('app_metadata write failed');
+    return { success: false, error: cleaned ? 'PROFILE_UPDATE_FAILED' : STRANDED_ERROR };
   }
 
   // Create the role profile row — without this, listings/dispatch/delivery all break
@@ -256,8 +285,8 @@ export async function registerAction(formData: FormData): Promise<AuthResult> {
   }
 
   if (profileError) {
-    await rollback();
-    return { success: false, error: 'Could not create your profile. Please try again.' };
+    const cleaned = await rollback('profile insert failed');
+    return { success: false, error: cleaned ? 'Could not create your profile. Please try again.' : STRANDED_ERROR };
   }
 
   // Establish the browser session (admin.createUser does not sign the user in)
