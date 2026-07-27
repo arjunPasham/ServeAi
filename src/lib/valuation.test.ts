@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { currentValuations, valueItems, type ValuationRow } from './valuation';
+import { currentValuations, valueItems, parseValuationInput, type ValuationRow } from './valuation';
 
 const NOW = Date.parse('2026-07-16T18:00:00Z');
 
@@ -39,5 +39,38 @@ describe('valueItems', () => {
     const current = currentValuations(rows, NOW);
     expect(valueItems([{ categoryKey: 'DELI', estLbs: 1 }], current))
       .toEqual({ ok: false, missingCategory: 'DELI' });
+  });
+});
+
+describe('parseValuationInput', () => {
+  test('parses dollar strings into rounded integer cents', () => {
+    expect(parseValuationInput({ fmvDollars: '4.49', basisDollars: '1.40' }))
+      .toEqual({ ok: true, fmvPerLbCents: 449, basisPerLbCents: 140 });
+  });
+
+  test('accepts zero basis (a give-away category has no cost basis)', () => {
+    expect(parseValuationInput({ fmvDollars: '1.99', basisDollars: '0' }))
+      .toEqual({ ok: true, fmvPerLbCents: 199, basisPerLbCents: 0 });
+  });
+
+  test('rounds a sub-cent entry to the nearest cent', () => {
+    expect(parseValuationInput({ fmvDollars: '1.999', basisDollars: '0.501' }))
+      .toEqual({ ok: true, fmvPerLbCents: 200, basisPerLbCents: 50 });
+  });
+
+  test('rejects a non-numeric, empty, or negative fmv as INVALID_FMV', () => {
+    expect(parseValuationInput({ fmvDollars: 'abc', basisDollars: '1.00' }).ok).toBe(false);
+    expect(parseValuationInput({ fmvDollars: '', basisDollars: '1.00' }))
+      .toEqual({ ok: false, error: 'INVALID_FMV' });
+    expect(parseValuationInput({ fmvDollars: '-1', basisDollars: '1.00' }))
+      .toEqual({ ok: false, error: 'INVALID_FMV' });
+  });
+
+  test('rejects a bad basis as INVALID_BASIS (fmv is checked first)', () => {
+    expect(parseValuationInput({ fmvDollars: '4.00', basisDollars: '-2' }))
+      .toEqual({ ok: false, error: 'INVALID_BASIS' });
+    // both bad -> fmv error wins (validated first)
+    expect(parseValuationInput({ fmvDollars: 'x', basisDollars: 'y' }))
+      .toEqual({ ok: false, error: 'INVALID_FMV' });
   });
 });

@@ -36,6 +36,33 @@ export function currentValuations(rows: ValuationRow[], nowMs: number = Date.now
   return current;
 }
 
+export type ParsedValuationInput =
+  | { ok: true; fmvPerLbCents: number; basisPerLbCents: number }
+  | { ok: false; error: 'INVALID_FMV' | 'INVALID_BASIS' };
+
+/**
+ * Parses the ops valuation-editor form (dollar strings) into non-negative
+ * integer cents, rounding to the nearest cent. Pure — the append action calls
+ * this before insert_valuation so a bad entry never reaches the RPC, and the
+ * RPC's own >= 0 guard is the DB-side backstop. fmv is validated first, so a
+ * form with both fields bad reports INVALID_FMV.
+ */
+export function parseValuationInput(raw: { fmvDollars: string; basisDollars: string }): ParsedValuationInput {
+  const fmv = dollarsToCents(raw.fmvDollars);
+  if (fmv === null) return { ok: false, error: 'INVALID_FMV' };
+  const basis = dollarsToCents(raw.basisDollars);
+  if (basis === null) return { ok: false, error: 'INVALID_BASIS' };
+  return { ok: true, fmvPerLbCents: fmv, basisPerLbCents: basis };
+}
+
+/** A finite, non-negative dollar string → integer cents, else null. An empty string parses to 0 under Number(), so guard it explicitly. */
+function dollarsToCents(raw: string): number | null {
+  if (raw.trim() === '') return null;
+  const dollars = Number(raw);
+  if (!Number.isFinite(dollars) || dollars < 0) return null;
+  return Math.round(dollars * 100);
+}
+
 export function valueItems(items: ItemToValue[], current: Map<string, ValuationRow>): ValuationResult {
   const perItem: { categoryKey: string; estLbs: number; fmvCents: number; basisCents: number }[] = [];
   let totalFmvCents = 0;
