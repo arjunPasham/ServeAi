@@ -28,6 +28,22 @@ describe('computeSafetyExpiry', () => {
     const future = new Date(NOW + 10 * 60 * 1000).toISOString();
     expect(computeSafetyExpiry(HOT, future, NOW)).toEqual({ ok: false, error: 'PREPARED_AT_IN_FUTURE' });
   });
+
+  // Boundary at exactly the 5-min clock-skew edge (CLOCK_SKEW_MS in
+  // safety-window.ts). The future check is `preparedMs > nowMs + skew`, so the
+  // edge itself is INCLUSIVE (accepted) and one millisecond past it is rejected.
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+  test('prepared_at exactly at the +5-min edge is accepted (boundary inclusive)', () => {
+    const atEdge = new Date(NOW + FIVE_MIN_MS).toISOString();
+    expect(computeSafetyExpiry(HOT, atEdge, NOW)).toEqual({
+      ok: true,
+      safetyExpiresAt: new Date(NOW + FIVE_MIN_MS + 2 * 60 * 60 * 1000).toISOString(),
+    });
+  });
+  test('prepared_at one millisecond past the +5-min edge is rejected as future', () => {
+    const justPast = new Date(NOW + FIVE_MIN_MS + 1).toISOString();
+    expect(computeSafetyExpiry(HOT, justPast, NOW)).toEqual({ ok: false, error: 'PREPARED_AT_IN_FUTURE' });
+  });
   test('already-expired window is rejected', () => {
     const stale = new Date(NOW - 3 * 60 * 60 * 1000).toISOString(); // 3h ago, 2h window
     expect(computeSafetyExpiry(HOT, stale, NOW)).toEqual({ ok: false, error: 'SAFETY_WINDOW_EXPIRED' });

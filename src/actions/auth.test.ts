@@ -11,14 +11,26 @@ vi.mock('@/lib/twilio', () => ({
   sendOTP: vi.fn(),
   verifyOTP: vi.fn(),
 }));
+// registerAction (below) touches these boundaries too. Mocking them here is
+// inert for the verifyOTPAction tests (which never call them).
+vi.mock('next/headers', () => ({ headers: vi.fn(async () => new Map<string, string>()) }));
+vi.mock('@/lib/smarty', () => ({ validateUSAddress: vi.fn(), isSmartyDevMode: vi.fn(() => true) }));
+vi.mock('@/lib/delivery', () => ({ getDeliveryMode: vi.fn(() => 'provider') }));
+vi.mock('@/lib/rate-limit', () => ({ checkAuthIPLimit: vi.fn(), checkRegisterIPLimit: vi.fn() }));
 
-import { verifyOTPAction } from './auth';
+import { registerAction, verifyOTPAction } from './auth';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
-import { verifyOTP } from '@/lib/twilio';
+import { sendOTP, verifyOTP } from '@/lib/twilio';
+import { validateUSAddress, isSmartyDevMode } from '@/lib/smarty';
+import { checkRegisterIPLimit } from '@/lib/rate-limit';
 
 const mockCreateClient = vi.mocked(createClient);
 const mockCreateServiceClient = vi.mocked(createServiceClient);
 const mockVerifyOTP = vi.mocked(verifyOTP);
+const mockSendOTP = vi.mocked(sendOTP);
+const mockValidateAddress = vi.mocked(validateUSAddress);
+const mockIsSmartyDevMode = vi.mocked(isSmartyDevMode);
+const mockCheckRegisterIPLimit = vi.mocked(checkRegisterIPLimit);
 
 const PHONE = '+13135551234';
 const PENDING = {
@@ -274,5 +286,160 @@ describe('verifyOTPAction', () => {
     expect(result.success).toBe(true);
     expect(result.redirectTo).toBe('/consumer/browse');
     expect(calls.merchantsUpsert).toHaveLength(0);
+  });
+});
+
+// ─── registerAction (merchant provisioning deferral — review C1) ─────────────
+// Directly executes registerAction to close the flagged gap: its merchant path
+// had zero direct test coverage. The invariant: a donor registration STASHES
+// pending_merchant in app_metadata and creates NO merchants row (and leaves the
+// account unverified) — provisioning is deferred to verifyOTPAction after OTP.
+
+/**
+ * A register-focused service double. Records every write and exposes the
+ * auth-admin surface registerAction uses (createUser/updateUserById/deleteUser).
+ * Any table write resolves to { error: null } unless it's a tracked one.
+ */
+function makeRegisterService() {
+  const calls = {
+    merchantsWrites: [] as { op: string; payload: unknown }[],
+    donorInsert: [] as unknown[],
+    consumerInsert: [] as unknown[],
+    metaUpdate: [] as { id: string; attrs: { app_metadata?: Record<string, unknown> } }[],
+    createUser: 0,
+    deleteUser: 0,
+  };
+  const admin = {
+    createUser: vi.fn(async () => {
+      calls.createUser += 1;
+      return { data: { user: { id: 'new-user' } }, error: null };
+    }),
+    updateUserById: vi.fn(async (id: string, attrs: { app_metadata?: Record<string, unknown> }) => {
+      calls.metaUpdate.push({ id, attrs });
+      return { data: {}, error: null };
+    }),
+    deleteUser: vi.fn(async () => {
+      calls.deleteUser += 1;
+      return { data: {}, error: null };
+    }),
+  };
+
+  function builder(table: string) {
+    let op: string | null = null;
+    let payload: unknown = null;
+    const resolve = () => {
+      if (table === 'users' && op === 'select') return Promise.resolve({ data: null, error: null }); // phone not taken
+      if (table === 'merchants') { calls.merchantsWrites.push({ op: op ?? '?', payload }); return Promise.resolve({ error: null }); }
+      if (table === 'donor_profiles' && op === 'insert') { calls.donorInsert.push(payload); return Promise.resolve({ error: null }); }
+      if (table === 'consumer_profiles' && op === 'insert') { calls.consumerInsert.push(payload); return Promise.resolve({ error: null }); }
+      return Promise.resolve({ data: null, error: null });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const b: any = {
+      select: vi.fn(() => { op = 'select'; return b; }),
+      update: vi.fn((p: unknown) => { op = 'update'; payload = p; return b; }),
+      upsert: vi.fn((p: unknown) => { op = 'upsert'; payload = p; return b; }),
+      insert: vi.fn((p: unknown) => { op = 'insert'; payload = p; return b; }),
+      eq: vi.fn(() => b),
+      single: vi.fn(() => resolve()),
+      maybeSingle: vi.fn(() => resolve()),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      then: (onF: any, onR: any) => resolve().then(onF, onR),
+    };
+    return b;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const service: any = { from: vi.fn((table: string) => builder(table)), auth: { admin } };
+  return { service, calls };
+}
+
+function makeRegisterAuthClient() {
+  return { auth: { signInWithPassword: vi.fn(async () => ({ data: { user: { id: 'new-user' } }, error: null })) } };
+}
+
+function registerForm(fields: Record<string, string>): FormData {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  return fd;
+}
+
+describe('registerAction', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockCheckRegisterIPLimit.mockResolvedValue({ allowed: true });
+    mockSendOTP.mockResolvedValue({ success: true });
+    mockIsSmartyDevMode.mockReturnValue(true);
+    mockValidateAddress.mockResolvedValue({
+      valid: true,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      standardized: { deliveryLine: '1 Woodward Ave' } as any,
+      lat: 42.3314,
+      lng: -83.0458,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  test('a donor registration stashes pending_merchant and creates NO merchants row before OTP', async () => {
+    const { service, calls } = makeRegisterService();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateServiceClient.mockResolvedValue(service as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateClient.mockResolvedValue(makeRegisterAuthClient() as any);
+
+    const result = await registerAction(registerForm({
+      email: 'deli@example.com',
+      password: 'password123',
+      role: 'donor',
+      phone: '313-555-1234',
+      address: '1 Woodward Ave, Detroit, MI 48226',
+      businessName: 'Test Deli',
+    }));
+
+    expect(result.success).toBe(true);
+    expect(result.redirectTo).toContain('/verify-phone');
+
+    // The core C1 invariant: NO merchants row written during registration.
+    expect(calls.merchantsWrites).toHaveLength(0);
+
+    // pending_merchant stashed in app_metadata, account left UNVERIFIED.
+    expect(calls.metaUpdate).toHaveLength(1);
+    const appMeta = calls.metaUpdate[0].attrs.app_metadata ?? {};
+    expect(appMeta.phone_verified).toBe(false);
+    expect(appMeta.pending_merchant).toMatchObject({
+      businessName: 'Test Deli',
+      addressValidated: false, // dev-mode Smarty coords never count as validated
+    });
+
+    // The donor profile row IS created (the merchants row is what's deferred).
+    expect(calls.donorInsert).toHaveLength(1);
+  });
+
+  test('a consumer registration stashes no pending_merchant and writes no merchants row', async () => {
+    const { service, calls } = makeRegisterService();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateServiceClient.mockResolvedValue(service as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockCreateClient.mockResolvedValue(makeRegisterAuthClient() as any);
+
+    const result = await registerAction(registerForm({
+      email: 'shelter@example.com',
+      password: 'password123',
+      role: 'consumer',
+      phone: '313-555-9876',
+      address: '2 Woodward Ave, Detroit, MI 48226',
+    }));
+
+    expect(result.success).toBe(true);
+    expect(calls.merchantsWrites).toHaveLength(0);
+    expect(calls.consumerInsert).toHaveLength(1);
+    expect(calls.metaUpdate).toHaveLength(1);
+    const appMeta = calls.metaUpdate[0].attrs.app_metadata ?? {};
+    expect(appMeta.phone_verified).toBe(false);
+    expect(appMeta.pending_merchant).toBeUndefined();
   });
 });
