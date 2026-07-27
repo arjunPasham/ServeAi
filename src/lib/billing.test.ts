@@ -4,6 +4,7 @@ import {
   BILLING_PLANS,
   isBillingPlan,
   canStartSubscription,
+  subscriptionStatusLabel,
   addBillingInterval,
   buildBillingEventPayload,
 } from './billing';
@@ -37,6 +38,17 @@ describe('canStartSubscription', () => {
   });
   test('an unknown/future status is treated as NOT startable (conservative)', () => {
     expect(canStartSubscription('some_new_stripe_status')).toBe(false);
+  });
+});
+
+describe('subscriptionStatusLabel', () => {
+  test('maps known statuses to friendly labels', () => {
+    expect(subscriptionStatusLabel('none')).toBe('No subscription');
+    expect(subscriptionStatusLabel('active')).toBe('Active');
+    expect(subscriptionStatusLabel('past_due')).toBe('Past due');
+  });
+  test('falls back to the raw value for an unknown status', () => {
+    expect(subscriptionStatusLabel('some_new_status')).toBe('some_new_status');
   });
 });
 

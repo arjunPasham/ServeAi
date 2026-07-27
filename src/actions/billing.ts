@@ -19,10 +19,12 @@
 
 import { randomUUID } from 'crypto';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
+import { requireVerifiedMerchant } from '@/lib/authz';
 import {
   isStripeDevMode,
   createBillingCustomer,
   createSubscriptionCheckoutSession,
+  createBillingPortalSession,
 } from '@/lib/stripe';
 import { BILLING_PLANS, isBillingPlan, canStartSubscription, addBillingInterval } from '@/lib/billing';
 
@@ -164,6 +166,113 @@ export async function startMerchantSubscription(merchantId: string): Promise<Sta
     return { success: true, mode: 'checkout', checkoutUrl: url };
   } catch (err) {
     console.error('[startMerchantSubscription] checkout session failed:', err);
+    return { success: false, error: 'SERVER_ERROR' };
+  }
+}
+
+// ─── Merchant self-service billing (Task 2 — read + portal handoff only) ─────
+
+export interface MerchantInvoice {
+  stripeInvoiceId: string;
+  status: string;
+  amountDueCents: number;
+  amountPaidCents: number;
+  currency: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  hostedInvoiceUrl: string | null;
+  createdAt: string;
+}
+
+export interface MerchantBilling {
+  businessName: string;
+  plan: string;
+  subscriptionStatus: string;
+  currentPeriodEnd: string | null;
+  hasCustomer: boolean;
+  invoices: MerchantInvoice[];
+}
+
+/**
+ * A merchant's own billing summary: subscription status + invoice history (from
+ * the invoices mirror, 027). requireVerifiedMerchant, then reads its OWN rows via
+ * the service client filtered by merchantId (no cross-tenant leak). Throws on a
+ * failed authz (only reachable from the middleware-gated /merchant surface) or a
+ * DB error — same posture as getCategoriesWithValuations.
+ */
+export async function getMerchantBilling(): Promise<MerchantBilling> {
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) throw new Error(`getMerchantBilling: not a verified merchant (${authz.error})`);
+
+  const service = await createServiceClient();
+  const [{ data: merchant, error: mErr }, { data: invoices, error: iErr }] = await Promise.all([
+    service
+      .from('merchants')
+      .select('business_name, plan, subscription_status, subscription_current_period_end, stripe_customer_id')
+      .eq('id', authz.merchant.merchantId)
+      .single(),
+    service
+      .from('invoices')
+      .select('stripe_invoice_id, status, amount_due_cents, amount_paid_cents, currency, period_start, period_end, hosted_invoice_url, created_at')
+      .eq('merchant_id', authz.merchant.merchantId)
+      .order('created_at', { ascending: false }),
+  ]);
+  if (mErr) throw new Error(`getMerchantBilling: merchant lookup failed: ${mErr.message}`);
+  if (iErr) throw new Error(`getMerchantBilling: invoices lookup failed: ${iErr.message}`);
+
+  return {
+    businessName: merchant!.business_name,
+    plan: merchant!.plan,
+    subscriptionStatus: merchant!.subscription_status,
+    currentPeriodEnd: merchant!.subscription_current_period_end,
+    hasCustomer: merchant!.stripe_customer_id != null,
+    invoices: (invoices ?? []).map(v => ({
+      stripeInvoiceId: v.stripe_invoice_id,
+      status: v.status,
+      amountDueCents: Number(v.amount_due_cents),
+      amountPaidCents: Number(v.amount_paid_cents),
+      currency: v.currency,
+      periodStart: v.period_start,
+      periodEnd: v.period_end,
+      hostedInvoiceUrl: v.hosted_invoice_url,
+      createdAt: v.created_at,
+    })),
+  };
+}
+
+export type BillingPortalResult =
+  | { success: true; url: string }
+  | { success: false; error: 'NOT_A_MERCHANT' | 'NO_CUSTOMER' | 'SERVER_ERROR' };
+
+/**
+ * Opens a Stripe Billing customer-portal session for the merchant's own Stripe
+ * customer (self-service plan/payment-method management). requireVerifiedMerchant,
+ * then a dev-mode-simulated portal link. NO_CUSTOMER when ops hasn't started the
+ * merchant's subscription yet (no stripe_customer_id) — the page tells them to
+ * contact ops rather than showing a dead portal button.
+ */
+export async function openMerchantBillingPortal(): Promise<BillingPortalResult> {
+  const authz = await requireVerifiedMerchant();
+  if (!authz.ok) return { success: false, error: 'NOT_A_MERCHANT' };
+
+  const service = await createServiceClient();
+  const { data: merchant, error } = await service
+    .from('merchants')
+    .select('stripe_customer_id')
+    .eq('id', authz.merchant.merchantId)
+    .single();
+  if (error) return { success: false, error: 'SERVER_ERROR' };
+  if (!merchant?.stripe_customer_id) return { success: false, error: 'NO_CUSTOMER' };
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  try {
+    const { url } = await createBillingPortalSession({
+      customerId: merchant.stripe_customer_id,
+      returnUrl: `${appUrl}/merchant/billing`,
+    });
+    return { success: true, url };
+  } catch (err) {
+    console.error('[openMerchantBillingPortal] portal session failed:', err);
     return { success: false, error: 'SERVER_ERROR' };
   }
 }

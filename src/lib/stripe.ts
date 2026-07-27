@@ -239,6 +239,26 @@ export async function createSubscriptionCheckoutSession(params: {
   return { url: session.url };
 }
 
+// Create a Stripe Billing customer-portal session so a merchant can self-serve
+// plan management / payment methods / invoice history. Display + handoff only —
+// no charge logic here. Dev mode returns the return URL (no real Stripe), so
+// the merchant billing page degrades to a no-op link offline.
+export async function createBillingPortalSession(params: {
+  customerId: string;
+  returnUrl: string;
+}): Promise<{ url: string }> {
+  if (isStripeDevMode()) {
+    console.log(`[DEV] Simulated billing portal session for ${params.customerId}`);
+    return { url: params.returnUrl };
+  }
+
+  const session = await getStripe().billingPortal.sessions.create({
+    customer: params.customerId,
+    return_url: params.returnUrl,
+  });
+  return { url: session.url };
+}
+
 // ─── Stripe Connect Express onboarding (TRD Step 3/10, decision #2: Express) ──
 
 export async function createConnectAccount(params: {

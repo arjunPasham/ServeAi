@@ -41,6 +41,24 @@ export function canStartSubscription(subscriptionStatus: string): boolean {
   return STARTABLE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
 }
 
+// Friendly label for a subscription status, for merchant/ops display. Unknown
+// statuses fall back to the raw value (never throws) so a new Stripe status
+// still renders something sensible.
+const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
+  none: 'No subscription',
+  trialing: 'Trialing',
+  active: 'Active',
+  past_due: 'Past due',
+  unpaid: 'Unpaid',
+  incomplete: 'Incomplete',
+  incomplete_expired: 'Expired (never started)',
+  canceled: 'Canceled',
+  paused: 'Paused',
+};
+export function subscriptionStatusLabel(subscriptionStatus: string): string {
+  return SUBSCRIPTION_STATUS_LABELS[subscriptionStatus] ?? subscriptionStatus;
+}
+
 /** Advances an ISO timestamp by one billing interval. Used to synthesize a
  *  current_period_end for the dev-mode subscription simulation. Pure. */
 export function addBillingInterval(fromIso: string, interval: PlanConfig['interval']): string {

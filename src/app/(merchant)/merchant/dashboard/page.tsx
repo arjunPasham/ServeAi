@@ -38,12 +38,17 @@ export default async function MerchantDashboardPage() {
             <h1 className="text-lg font-bold text-gray-900">{dashboard.businessName}</h1>
             <p className="text-sm text-gray-500">{dashboard.loads.length} recent loads</p>
           </div>
-          <Link
-            href="/merchant/scan"
-            className="min-h-[44px] flex items-center bg-green-600 hover:bg-green-700 text-white font-semibold rounded-full px-5 text-sm transition-colors"
-          >
-            + Scan surplus
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/merchant/billing" className="text-sm text-gray-500 hover:text-gray-700">
+              Billing
+            </Link>
+            <Link
+              href="/merchant/scan"
+              className="min-h-[44px] flex items-center bg-green-600 hover:bg-green-700 text-white font-semibold rounded-full px-5 text-sm transition-colors"
+            >
+              + Scan surplus
+            </Link>
+          </div>
         </div>
       </header>
 
