@@ -18,6 +18,7 @@ import {
   getAdminScans,
 } from '@/actions/admin';
 import { startMerchantSubscription } from '@/actions/billing';
+import { issueDonationReceipt } from '@/actions/receipts';
 import { getSurplusPatterns, getDanglingScanSummary } from '@/actions/reports';
 import { canStartSubscription } from '@/lib/billing';
 import { describeSurplusPattern } from '@/lib/reports';
@@ -50,6 +51,14 @@ const ERROR_MESSAGES: Record<string, string> = {
   NOT_SUBSCRIPTION_PLAN: "That merchant's plan isn't a subscription plan (weekly/monthly/annual).",
   ALREADY_SUBSCRIBED: 'That merchant already has an active subscription.',
   PRICE_NOT_CONFIGURED: 'No Stripe Price configured for that plan (set STRIPE_PRICE_* env vars).',
+  // Donation receipt (Task 3)
+  LOAD_NOT_FOUND: 'That load was not found.',
+  NOT_DONATION_LANE: 'Only donation-lane loads get a receipt (a sale is recovered revenue).',
+  NOT_DELIVERED: 'That load isn’t delivered + recipient-confirmed yet.',
+  NOT_CONFIRMED: 'The recipient hasn’t confirmed receipt yet.',
+  DONEE_NOT_VERIFIED: 'The donee isn’t a verified 501(c)(3).',
+  ALREADY_ISSUED: 'A receipt has already been issued for that load.',
+  EMPTY_LOAD: 'That load has no line items to value.',
   SERVER_ERROR: 'Something went wrong — try again.',
 };
 
@@ -91,13 +100,25 @@ async function startBillingAction(formData: FormData) {
   redirect('/admin/dashboard?billing=started');
 }
 
+// Generate a donation receipt worksheet for a delivered + confirmed donation
+// load (Task 3). Gated + frozen in issueDonationReceipt; an un-approved template
+// yields a DRAFT worksheet (pending CPA/counsel sign-off), not a claimable receipt.
+async function generateReceiptAction(formData: FormData) {
+  'use server';
+  const loadId = String(formData.get('loadId') ?? '');
+  const result = await issueDonationReceipt(loadId);
+  revalidatePath('/admin/dashboard');
+  if (!result.success) redirect(`/admin/dashboard?error=${encodeURIComponent(result.error)}`);
+  redirect(`/admin/dashboard?receipt=${result.templateApproved ? 'issued' : 'draft'}`);
+}
+
 export default async function AdminDashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; ok?: string; billing?: string }>;
+  searchParams: Promise<{ error?: string; ok?: string; billing?: string; receipt?: string }>;
 }) {
   await checkAdmin();
-  const { error, ok, billing } = await searchParams;
+  const { error, ok, billing, receipt } = await searchParams;
 
   const [catalog, merchants, loads, scans, surplusPatterns, dangling] = await Promise.all([
     getValuationCatalog(),
@@ -141,6 +162,16 @@ export default async function AdminDashboardPage({
         {billing === 'canceled' && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
             Checkout was canceled — the merchant has no active subscription.
+          </div>
+        )}
+        {receipt === 'issued' && (
+          <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-800">
+            Donation receipt issued.
+          </div>
+        )}
+        {receipt === 'draft' && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-900">
+            Draft worksheet generated — pending template approval (not a claimable receipt).
           </div>
         )}
         {dangling.count > 0 && (
@@ -364,10 +395,16 @@ export default async function AdminDashboardPage({
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Items</th>
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Earliest safety</th>
                     <th className="text-right px-4 py-3 font-medium text-gray-600">Declared</th>
+                    <th className="px-4 py-3 font-medium text-gray-600">Receipt</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {loads.map(l => (
+                  {loads.map(l => {
+                    // Donation receipt is available once a donation load is
+                    // delivered + recipient-confirmed (issueDonationReceipt/033
+                    // re-check the confirm + npo_verified + not-already-issued).
+                    const receiptEligible = l.lane === 'donation' && (l.status === 'delivered' || l.status === 'closed');
+                    return (
                     <tr key={l.id}>
                       <td className="px-4 py-3 font-medium text-gray-900">{l.merchantBusinessName}</td>
                       <td className="px-4 py-3 text-gray-600">{l.windowDate}</td>
@@ -380,8 +417,21 @@ export default async function AdminDashboardPage({
                       <td className="px-4 py-3 text-right text-gray-500 text-xs">
                         <LocalDateTime iso={l.createdAt} variant="date" />
                       </td>
+                      <td className="px-4 py-3">
+                        {receiptEligible ? (
+                          <form action={generateReceiptAction}>
+                            <input type="hidden" name="loadId" value={l.id} />
+                            <button type="submit" className="bg-gray-700 text-white text-[11px] font-semibold rounded px-2 py-0.5 hover:bg-gray-800">
+                              Generate
+                            </button>
+                          </form>
+                        ) : (
+                          <span className="text-gray-300 text-xs">—</span>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
