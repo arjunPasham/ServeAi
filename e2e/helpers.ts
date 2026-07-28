@@ -548,6 +548,9 @@ export async function cleanup(ctx: TestContext): Promise<void> {
     // default), so any allocation created against one of these loads
     // (Phase 2 Task 3 — offer_load) must be cleared before the loads delete
     // below, or that delete fails with an FK violation.
+    // deliveries.load_id / .allocation_id -> loads/allocations (RESTRICT by
+    // default, 031), so delivery records must go before allocations + loads.
+    if (loadIds.length) await service.from('deliveries').delete().in('load_id', loadIds);
     if (loadIds.length) await service.from('allocations').delete().in('load_id', loadIds);
     if (loadIds.length) await service.from('load_items').delete().in('load_id', loadIds);
     if (ctx.scanRecordIds.length) await service.from('scan_items').delete().in('scan_record_id', ctx.scanRecordIds);
