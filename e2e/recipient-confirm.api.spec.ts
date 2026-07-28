@@ -90,6 +90,30 @@ test.describe('recipient confirm + dispute window', () => {
     expect(error?.message).toContain('SIGNER_REQUIRED');
   });
 
+  test('a repeat confirm is an idempotent no-op — signer + dispute window are not re-stamped (034 M2)', async () => {
+    const { allocationId } = await scheduledDelivery('idempotent');
+
+    const window1 = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const { data: first, error: e1 } = await service.rpc('recipient_confirm_delivery', {
+      p_allocation_id: allocationId, p_signer_name: 'First Signer', p_discrepancy_reason: null,
+      p_expires_at: window1, p_actor: null,
+    });
+    expect(e1).toBeNull();
+
+    // A second confirm with DIFFERENT args (longer window, new signer, a
+    // discrepancy) must be a clean no-op — nothing re-stamped.
+    const window2 = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
+    const { data: second, error: e2 } = await service.rpc('recipient_confirm_delivery', {
+      p_allocation_id: allocationId, p_signer_name: 'Second Signer', p_discrepancy_reason: 'late',
+      p_expires_at: window2, p_actor: null,
+    });
+    expect(e2).toBeNull();
+    expect(second.signer_name).toBe('First Signer');                       // not overwritten
+    expect(second.acknowledged_at).toBe(first.acknowledged_at);            // not re-stamped
+    expect(second.dispute_window_expires_at).toBe(first.dispute_window_expires_at); // window NOT extended
+    expect(second.discrepancy_reason).toBeNull();                          // repeat added nothing
+  });
+
   test('flagging after the window has closed is rejected', async () => {
     const { allocationId } = await scheduledDelivery('closedwin');
     // Confirm with a window that is ALREADY past.

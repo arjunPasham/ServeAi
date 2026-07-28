@@ -69,7 +69,7 @@ test.describe('delivery lifecycle (v3, records-only)', () => {
     expect(await loadStatus(loadId)).toBe('picked_up');
 
     // merchant marks delivered, then the recipient confirms (adds signer + ack)
-    const { error: dErr } = await service.rpc('mark_delivered', { p_load_id: loadId, p_actor: null });
+    const { error: dErr } = await service.rpc('mark_delivered', { p_load_id: loadId, p_merchant_id: merchantId, p_actor: userId });
     expect(dErr).toBeNull();
     expect(await loadStatus(loadId)).toBe('delivered');
 

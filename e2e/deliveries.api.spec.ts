@@ -73,7 +73,7 @@ test.describe('delivery-log RPCs', () => {
 
     // picked_up → delivered
     const { data: delivered, error: delErr } = await service.rpc('mark_delivered', {
-      p_load_id: loadId, p_actor: null,
+      p_load_id: loadId, p_merchant_id: merchantId, p_actor: user.id,
     });
     expect(delErr).toBeNull();
     expect(delivered.delivered_at).not.toBeNull();
@@ -129,5 +129,29 @@ test.describe('delivery-log RPCs', () => {
 
     const { data: load } = await service.from('loads').select('status').eq('id', loadId).single();
     expect(load!.status).toBe('picked_up'); // the handoff still advanced
+  });
+
+  test('mark_delivered rejects a load owned by a different merchant (034 M1 ownership guard)', async () => {
+    const user = await createTestUser(ctx, 'donor', { emailLabel: 'ownership' });
+    const { merchantId } = await createMerchant(ctx, user.id);
+    const { loadId } = await createDeclaredLoad(ctx, {
+      merchantId, scannedBy: user.id, items: [{ categoryKey: 'BAKERY', foodName: 'Buns', estLbs: 2 }],
+    });
+    const { institutionId } = await createInstitution(ctx, { orgName: `E2E Own ${ctx.runId}`, npoVerified: true });
+    const allocationId = await offerAndAccept(loadId, institutionId, user.id);
+    await service.rpc('set_delivery_method', {
+      p_load_id: loadId, p_merchant_id: merchantId, p_allocation_id: allocationId,
+      p_method: 'pickup', p_responsible_party: 'recipient', p_notes: null, p_actor: user.id,
+    });
+
+    // A different merchant id must NOT be able to advance this load.
+    const { error } = await service.rpc('mark_delivered', {
+      p_load_id: loadId, p_merchant_id: '00000000-0000-0000-0000-000000000000', p_actor: user.id,
+    });
+    expect(error?.message).toContain('LOAD_NOT_FOUND');
+
+    // …and the load is untouched (still scheduled).
+    const { data: load } = await service.from('loads').select('status').eq('id', loadId).single();
+    expect(load!.status).toBe('scheduled');
   });
 });

@@ -59,7 +59,7 @@ async function deliveredLoad(
     });
   } else {
     // Delivered, but NOT recipient-confirmed (no acknowledged_at).
-    await service.rpc('mark_delivered', { p_load_id: loadId, p_actor: null });
+    await service.rpc('mark_delivered', { p_load_id: loadId, p_merchant_id: merchantId, p_actor: user.id });
   }
   return { loadId, institutionId };
 }
