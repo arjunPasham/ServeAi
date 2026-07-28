@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   DELIVERY_METHODS,
   RESPONSIBLE_PARTIES,
+  DISPUTE_WINDOW_HOURS,
+  DISPUTE_WINDOW_MS,
   isDeliveryMethod,
   isResponsibleParty,
   deliveryMethodLabel,
@@ -22,6 +24,13 @@ describe('delivery method / party vocab', () => {
     expect(isDeliveryMethod('')).toBe(false);
     expect(isResponsibleParty('recipient')).toBe(true);
     expect(isResponsibleParty('courier')).toBe(false); // v3 brokers no couriers
+  });
+});
+
+describe('DISPUTE_WINDOW', () => {
+  test('is a sane positive window with MS derived from HOURS', () => {
+    expect(DISPUTE_WINDOW_HOURS).toBeGreaterThan(0);
+    expect(DISPUTE_WINDOW_MS).toBe(DISPUTE_WINDOW_HOURS * 60 * 60 * 1000);
   });
 });
 

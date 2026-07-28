@@ -63,4 +63,13 @@ export type FoodLinkEvents = {
       allocation_id: string;
     };
   };
+  // Fired (best-effort) when a recipient confirms receipt (v3 Task 2). Opens
+  // the dispute window: the delivery-dispute-window function sleeps until the
+  // delivery's dispute_window_expires_at, then closes the load. The confirm
+  // already committed via recipient_confirm_delivery, so this is best-effort.
+  'load/delivered': {
+    data: {
+      load_id: string;
+    };
+  };
 };

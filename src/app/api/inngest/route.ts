@@ -7,12 +7,13 @@ import { claimExpiry } from '@/inngest/functions/claim-expiry';
 import { expireOffers } from '@/inngest/functions/expire-offers';
 import { offerNotification } from '@/inngest/functions/offer-notification';
 import { dispositionHygiene } from '@/inngest/functions/disposition-hygiene';
+import { deliveryDisputeWindow } from '@/inngest/functions/delivery-dispute-window';
 
 // cold-chain-check + delivery-reconcile: dead pre-pivot 5-min crons, unregistered
 // pre-Phase-2 (files retained for Phase 3 deletion)
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [courierDispatch, disputeWindow, feedbackPrompt, claimExpiry, expireOffers, offerNotification, dispositionHygiene],
+  functions: [courierDispatch, disputeWindow, feedbackPrompt, claimExpiry, expireOffers, offerNotification, dispositionHygiene, deliveryDisputeWindow],
   signingKey: process.env.INNGEST_SIGNING_KEY,
 });

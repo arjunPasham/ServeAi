@@ -15,6 +15,14 @@ export type DeliveryMethod = (typeof DELIVERY_METHODS)[number];
 export const RESPONSIBLE_PARTIES = ['donor', 'recipient'] as const;
 export type ResponsibleParty = (typeof RESPONSIBLE_PARTIES)[number];
 
+// How long the recipient can flag a discrepancy after confirming receipt (v3
+// Task 2). Single-sourced: the confirm action stamps dispute_window_expires_at
+// = now + this, and the Inngest dispute-window function sleeps until that exact
+// timestamp — no drift between the DB deadline and the timer. 24h gives a
+// recipient a day to unpack and flag an issue; a flag is recorded, not refereed.
+export const DISPUTE_WINDOW_HOURS = 24;
+export const DISPUTE_WINDOW_MS = DISPUTE_WINDOW_HOURS * 60 * 60 * 1000;
+
 export function isDeliveryMethod(x: string): x is DeliveryMethod {
   return (DELIVERY_METHODS as readonly string[]).includes(x);
 }
