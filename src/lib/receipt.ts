@@ -71,7 +71,7 @@ export interface ReceiptWorksheetData {
   lines: { foodName: string; categoryLabel: string; estLbs: number; fmvCents: number; basisCents: number }[];
 }
 
-const RECEIPT_DISCLAIMER =
+export const RECEIPT_DISCLAIMER =
   'Not tax advice. This worksheet estimates a charitable contribution deduction under ' +
   'IRC 170(e)(3) from FoodLink’s recorded values. The merchant’s CPA determines ' +
   'what is actually claimable.';

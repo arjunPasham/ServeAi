@@ -16,6 +16,10 @@ const PREFIX_ROLE: Record<string, string> = {
   '/consumer': 'consumer',
   '/courier': 'courier',
   '/admin': 'admin',
+  // Internal staff console: base auth layer (authenticated + admin) enforced
+  // here; the email ALLOWLIST + notFound-on-deny is enforced in the (internal)
+  // layout/actions via requireInternalStaff (src/lib/internal-authz.ts).
+  '/internal': 'admin',
 };
 
 export async function updateSession(request: NextRequest) {
