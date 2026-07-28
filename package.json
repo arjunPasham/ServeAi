@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:unit": "vitest run",
     "test:scan": "tsx scripts/test-scan.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed:review": "tsx scripts/seed-review-walkthrough.ts"
   },
   "dependencies": {
     "@google/genai": "^2.10.0",
