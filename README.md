@@ -51,7 +51,7 @@ npx inngest-cli@latest dev         # terminal 2 — background jobs (http://loca
 
 ```
 src/                 Next.js app — routes, server actions, components, lib, inngest jobs
-supabase/            SQL migrations (001…013) + seed.sql
+supabase/            SQL migrations (001…033) + seed.sql
 N8N-BUILDER/         Optional n8n workflow automations + Claude skills (not required to run the app)
 docs/                Setup + product/technical/UX docs
 public/              Static assets

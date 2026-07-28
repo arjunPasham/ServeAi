@@ -47,7 +47,16 @@ filename order**, then the seed:
 10. `018_categories_valuations.sql` (pivot Phase 1 — category taxonomy + versioned valuation table)
 11. `019_merchants.sql` (pivot Phase 1 — merchants entity, backfilled from donor_profiles)
 12. `020_scan_inventory.sql` (pivot Phase 1 — scan_records/scan_items/loads/load_items + `declare_load` RPC)
-13. `seed.sql` (USDA prices — legacy consumer flow only)
+13. `021_security_hardening.sql` … `022_other_tcs_default.sql` (Phase 1 hardening — indexes, retention COMMENTs, TCS default)
+14. `023_institutions.sql` … `025_withdraw_offer.sql` (Phase 2 Match — institutions, allocations, offer/respond/confirm_and_declare/withdraw/expire RPCs)
+15. `026_valuation_admin.sql` (ops valuation editor `insert_valuation` + `basis_per_lb_cents` read restriction)
+16. `027_billing.sql` (subscription billing — `invoices` mirror, `processed_stripe_events` dedup, `handle_billing_webhook`)
+17. `028_data_pipeline.sql` (Phase 7 reporting VIEWs + dangling-scan index)
+18. `029_invoice_status_hardening.sql` · `030_webhook_payload_hardening.sql` (billing webhook payload hardening)
+19. `031_deliveries.sql` (**v3 Delivery-log** — `deliveries` + `set_delivery_method`/`mark_picked_up`/`mark_delivered`)
+20. `032_recipient_confirm.sql` (**v3** recipient confirm + dispute window — `recipient_confirm_delivery`/`flag_delivery_discrepancy`/`close_delivery_window`)
+21. `033_receipts.sql` (**v3** donation receipt — `receipts` + `issue_receipt`/`set_receipt_pdf`, 170(e)(3) frozen from snapshots)
+22. `seed.sql` (USDA prices — legacy consumer flow only)
 
 > ⚠️ `supabase/combined_migrations.sql` was generated from 001–013 only — it
 > does **not** include `014_connect_onboarding.sql`. If you bootstrapped the
@@ -59,6 +68,22 @@ filename order**, then the seed:
 > `009_security_hardening.sql`, `013_merge_reconciliation.sql` was originally
 > `011_merge_reconciliation.sql`). `013` reconciles the 012/010 overlap, so the
 > final state is correct regardless of exact run order between 009–013.
+
+> **v3 delivery-log, recipient confirm & donation receipts** (migrations 031–033).
+> FoodLink is records-only: it owns no fleet and runs no delivery. A matched load
+> advances by RECORDING what the two businesses do — the merchant picks a method
+> + responsible party on the dashboard (`matched→scheduled`) and marks it picked
+> up; the recipient confirms receipt via the no-login `/inbound/[token]` page
+> (`→delivered`) and may flag a discrepancy within a dispute window (recorded,
+> not refereed); the window closes the load (`→closed`) via Inngest. For a
+> DONATION-lane load, ops can then generate a 170(e)(3) donation-receipt
+> worksheet (values frozen from the load's valuation snapshots). Two optional
+> env vars (neither required in prod — absence is the safe default):
+> `RECEIPT_TEMPLATE_APPROVED=true` finalizes receipts once the wording clears
+> CPA/counsel review (unset ⇒ DRAFT worksheets, not claimable); `RECEIPT_BUCKET`
+> names the private Storage bucket for worksheets (unset ⇒ upload is
+> dev-mode-simulated). There is **no** courier brokering, temperature tracking,
+> per-item accept/reject, sale commission, or Stripe Connect transfer in v3.
 
 ## 4. Run
 
