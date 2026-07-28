@@ -38,8 +38,9 @@ export interface PipelineLoad {
 }
 
 export interface PipelineHealth {
-  stageCounts: Record<string, number>;
-  loads: PipelineLoad[];
+  stageCounts: Record<string, number>; // TRUE totals across all loads (not capped)
+  loads: PipelineLoad[]; // most-recent detail rows, capped at RECENT_ROW_CAP
+  loadsCapped: boolean; // the detail list hit the cap (there are older loads not shown; counts still total)
 }
 
 interface PipelineLoadRow {
@@ -53,13 +54,28 @@ interface PipelineLoadRow {
   receipts: { template_approved: boolean }[];
 }
 
-const PIPELINE_ROW_CAP = 200;
+const RECENT_ROW_CAP = 200; // most-recent detail rows to render (counts are computed separately, uncapped)
 
-/** Every recent load by stage, with receipt state + delivery flags — the "is the whole flow working" view. Throws on DB error or a failed staff check. */
+/** Every load by stage (true totals) + the most-recent detail rows — the "is the whole flow working" view. Throws on DB error or a failed staff check. */
 export async function getPipelineHealth(): Promise<PipelineHealth> {
   await assertInternalStaff('getPipelineHealth');
 
   const service = await createServiceClient();
+
+  // Stage counts are TRUE totals via server-side COUNT per stage (head:true → no
+  // row transfer), so they stay correct beyond the RECENT_ROW_CAP detail list.
+  const countResults = await Promise.all(
+    LOAD_STAGES.map(async stage => {
+      const { count, error } = await service
+        .from('loads')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', stage);
+      if (error) throw new Error(`getPipelineHealth: count(${stage}) failed: ${error.message}`);
+      return [stage, count ?? 0] as const;
+    })
+  );
+  const stageCounts: Record<string, number> = Object.fromEntries(countResults);
+
   const { data, error } = await service
     .from('loads')
     .select<string, PipelineLoadRow>(
@@ -70,12 +86,10 @@ export async function getPipelineHealth(): Promise<PipelineHealth> {
        receipts(template_approved)`
     )
     .order('created_at', { ascending: false })
-    .limit(PIPELINE_ROW_CAP);
+    .limit(RECENT_ROW_CAP);
   if (error) throw new Error(`getPipelineHealth: loads lookup failed: ${error.message}`);
 
-  const stageCounts: Record<string, number> = Object.fromEntries(LOAD_STAGES.map(s => [s, 0]));
   const loads: PipelineLoad[] = (data ?? []).map(row => {
-    stageCounts[row.status] = (stageCounts[row.status] ?? 0) + 1;
     const accepted = row.allocations.find(a => a.status === 'accepted') ?? null;
     const d = row.deliveries[0] ?? null;
     const r = row.receipts[0] ?? null;
@@ -92,7 +106,7 @@ export async function getPipelineHealth(): Promise<PipelineHealth> {
       createdAt: row.created_at,
     };
   });
-  return { stageCounts, loads };
+  return { stageCounts, loads, loadsCapped: loads.length >= RECENT_ROW_CAP };
 }
 
 // ─── Panel B — unit economics (read-only) ─────────────────────────────────────
@@ -205,7 +219,8 @@ export async function getLegalHandoffList(): Promise<LegalHandoffRow[]> {
       `id, load_id, issued_at, signer_name, fmv_total_cents, basis_total_cents, enhanced_deduction_cents, method_version, template_approved, pdf_key,
        merchants(business_name), institutions(org_name)`
     )
-    .order('issued_at', { ascending: false });
+    .order('issued_at', { ascending: false })
+    .limit(RECENT_ROW_CAP);
   if (error) throw new Error(`getLegalHandoffList: receipts lookup failed: ${error.message}`);
 
   return (data ?? []).map(r => ({

@@ -1,8 +1,8 @@
 /**
  * Seeded review walkthrough (v3 Task 3) — DEV/OPS ONLY.
  *
- *   npx tsx scripts/seed-review-walkthrough.ts          # seed (idempotent)
- *   npx tsx scripts/seed-review-walkthrough.ts --clear  # remove the demo data
+ *   npm run seed:review -- --yes-dev   # seed (idempotent; --yes-dev confirms DEV)
+ *   npm run seed:review -- --clear     # remove the demo data
  *
  * Stands up ONE demo merchant (with a real, phone-verified login), ONE verified
  * 501(c)(3) institution, and a handful of loads PARKED at each v3 stage so you
@@ -18,9 +18,11 @@
  * issue_receipt), so the data is genuine, not faked. Idempotent: re-running
  * first clears the prior demo (fixed demo email / org marker), then re-seeds.
  *
- * SAFETY: refuses to run when NODE_ENV=production, and writes ONLY to the
- * Supabase project in .env.local — make sure that is your DEV project. It uses
- * the service role (bypasses RLS) purely to stand up the demo; it is not an app
+ * SAFETY: refuses to run when NODE_ENV=production, AND requires an explicit
+ * --yes-dev flag to seed (it prints the target Supabase URL first), so a bare
+ * run can't silently write to the wrong project. Writes ONLY to the Supabase
+ * project in .env.local — make sure that is your DEV project. It uses the
+ * service role (bypasses RLS) purely to stand up the demo; it is not an app
  * route, so it can never be triggered in the deployed app.
  */
 
@@ -256,6 +258,17 @@ async function main(): Promise<void> {
     await clearDemo();
     console.log('✅ Demo data cleared.');
     return;
+  }
+  // Defense-in-depth beyond the NODE_ENV guard (NODE_ENV is often unset under
+  // tsx, so it alone can't tell dev from prod). The seed WRITES demo rows via the
+  // service role — require an explicit ack that .env.local points at a dev project.
+  if (!process.argv.includes('--yes-dev')) {
+    console.error(
+      `Refusing to seed without confirmation.\n` +
+      `This WRITES demo data (service role) to:\n  ${SUPABASE_URL}\n` +
+      `Confirm that is a DEV project, then re-run:\n  npm run seed:review -- --yes-dev`
+    );
+    process.exit(1);
   }
   await seed();
 }

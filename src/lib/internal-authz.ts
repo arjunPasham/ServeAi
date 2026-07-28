@@ -30,9 +30,11 @@ export type InternalStaffResult =
 /**
  * The single internal-staff gate: authenticated + admin role + email on the
  * INTERNAL_STAFF_ALLOWLIST. Same auth mechanism as requireAdmin (getUser +
- * users.role via the service client) plus the allowlist. Throws only on a real
- * infra failure via the service read (a DB outage surfaces, not masquerades as a
- * denial); the three "not allowed" outcomes are typed. Fail-closed throughout.
+ * users.role via the service client) plus the allowlist. FAIL-CLOSED throughout:
+ * the three "not allowed" outcomes are typed, and a DB error on the role read is
+ * NOT surfaced — the discarded error leaves `data` null, which collapses to a
+ * NOT_ADMIN denial. For a security gate, denying on a DB blip is the safer
+ * default than throwing, and it matches requireAdmin's posture.
  */
 export async function requireInternalStaff(): Promise<InternalStaffResult> {
   const supabase = await createClient();

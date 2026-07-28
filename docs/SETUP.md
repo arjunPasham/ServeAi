@@ -85,16 +85,17 @@ filename order**, then the seed:
 > dev-mode-simulated). There is **no** courier brokering, temperature tracking,
 > per-item accept/reject, sale commission, or Stripe Connect transfer in v3.
 
-> **Seeded review walkthrough** (dev/ops only). `npm run seed:review` stands up a
-> demo merchant (real, phone-verified login: `demo-merchant@foodlink.dev` /
+> **Seeded review walkthrough** (dev/ops only). `npm run seed:review -- --yes-dev`
+> stands up a demo merchant (real, phone-verified login: `demo-merchant@foodlink.dev` /
 > `DemoReview123!`), a verified 501(c)(3), and loads PARKED at every v3 stage
 > (declared · offered · scheduled · delivered+DRAFT-receipt · delivered+blown/flagged)
 > by driving the real guarded RPCs — so you can click each stage with genuine
 > data. It prints the merchant login, the no-login `/inbound/<token>` links (Accept
 > / Confirm receipt), the ops + `/internal` URLs, and the load ids. Idempotent
 > (re-run resets it; `npm run seed:review -- --clear` removes it). Refuses to run
-> when `NODE_ENV=production` and writes only to the Supabase project in
-> `.env.local` — it is a script, never an app route.
+> when `NODE_ENV=production`; the `--yes-dev` flag is a required ack that
+> `.env.local` points at a DEV project (it prints the target URL first) — it
+> writes only to that project and is a script, never an app route.
 
 ## 4. Run
 

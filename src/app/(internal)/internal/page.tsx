@@ -55,6 +55,11 @@ export default async function InternalConsolePage() {
             </span>
           ))}
         </div>
+        {pipeline.loadsCapped && (
+          <p className="text-xs text-gray-500">
+            Badge counts are totals across all loads; the table below lists the most recent 200.
+          </p>
+        )}
         {pipeline.loads.length === 0 ? (
           <p className="text-sm text-gray-500">No loads yet.</p>
         ) : (
