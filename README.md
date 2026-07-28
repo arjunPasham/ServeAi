@@ -1,15 +1,26 @@
 # FoodLink
 
-The operating system for surplus food (pivot in progress — see `analysis/` and
-`PHASE_1_PLAN.md`). Merchants scan surplus with an AI vision pipeline; every scan
-becomes structured, valued inventory; confirmed manifests become declared loads for
-batched cold-chain routes to institutions. Built with Next.js 16, Supabase, Inngest,
-and Stripe. Every paid integration has a simulated **dev mode**, so the only hard
-requirement to run locally is a Supabase project + a Gemini API key.
+A **records + introductions SaaS for surplus food** (model v3, 2026-07-28 — see
+`analysis/` and `PHASE_1_PLAN.md`). A subscribing **merchant** scans surplus with an
+AI vision pipeline; every scan becomes structured, valued inventory (market price +
+cost basis); confirmed manifests become declared **loads** offered to a partner
+FoodLink introduced. **Donations go only to a verified 501(c)(3); discounted sales
+can go to a verified business — one lane per load, never blended.** FoodLink owns no
+fleet and does not run delivery: the two businesses pick the method (merchant
+delivery, pickup, Uber Direct on the merchant's own account, a local courier, …) and
+FoodLink **logs** the method, the handoff timestamps, and a blown-safety-window flag.
+It takes **0% of any sale** and never touches the delivery fee. Built with Next.js 16,
+Supabase, Inngest, and Stripe. Every paid integration has a simulated **dev mode**, so
+the only hard requirement to run locally is a Supabase project + a Gemini API key.
+
+> **What FoodLink is NOT (cut in the v3 model):** it does not own or dispatch couriers,
+> build routes, broker cold-chain logistics, take a commission on sales, or run a
+> custody/temperature-tracking subsystem. Delivery is records-only. The recipient
+> confirms quality on arrival and may flag a discrepancy in the dispute window — that
+> is *recorded, not refereed*.
 
 > The legacy consumer marketplace (donor listings → consumer checkout → courier
-> delivery) is mothballed behind `NEXT_PUBLIC_CONSUMER_ENABLED` and will be removed
-> as pivot phases replace its dependencies.
+> delivery) is mothballed behind `NEXT_PUBLIC_CONSUMER_ENABLED` and is being removed.
 
 ## Getting started
 
